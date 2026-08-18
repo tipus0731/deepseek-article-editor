@@ -283,6 +283,8 @@ function pickImageUrlJs(tag) {
 function toutiaoArticleId(url) {
   let m = /\/article\/(\d{6,})/i.exec(String(url));
   if (m) return m[1];
+  m = /\/w\/(\d{6,})/i.exec(String(url)); // 微头条 /w/ 格式
+  if (m) return m[1];
   m = /\/i(\d{6,})/i.exec(String(url));
   return m ? m[1] : null;
 }
@@ -344,10 +346,29 @@ async function directFetchArticle(url) {
           const buf = new Uint8Array(await res.arrayBuffer());
           if (via.kind === 'info') {
             const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
-            const content = j && j.data && String(j.data.content || '');
+            const d = (j && j.data) || {};
+            let content = String(d.content || '');
+            let title = String(d.title || '');
+            let extraImages = [];
+            // 微头条（/w/ 链接）：正文在 thread.thread_base，图片在 large_image_list
+            if (!content.replace(/<[^>]+>/g, '').trim()) {
+              const tb = d.thread && d.thread.thread_base;
+              if (tb) {
+                content = String(tb.content || tb.title || '');
+                if (!title) title = String(tb.title || '');
+                const list = tb.large_image_list;
+                if (Array.isArray(list)) {
+                  for (const it of list) {
+                    const u = it && typeof it === 'object' ? String(it.url || '') : String(it || '');
+                    if (u && pickImageUrlJs('<img src="' + u + '">')) extraImages.push(u);
+                  }
+                }
+              }
+            }
             if (content && content.replace(/<[^>]+>/g, '').trim()) {
-              const r2 = toutiaoHtmlToResult(content, j.data.title);
-              if (r2.text || r2.images.length) return { title: r2.title, text: r2.text, images: r2.images, url, via: p.name, source: 'toutiao' };
+              const r2 = toutiaoHtmlToResult(content, title);
+              const allImgs = [...new Set([...(r2.images || []), ...extraImages])].slice(0, 30);
+              if (r2.text || allImgs.length) return { title: r2.title, text: r2.text, images: allImgs, url, via: p.name, source: 'toutiao' };
             }
           } else {
             const html = new TextDecoder('utf-8').decode(buf);

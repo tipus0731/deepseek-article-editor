@@ -166,6 +166,8 @@ const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (
 function toutiaoArticleId(url) {
   let m = /\/article\/(\d{6,})/i.exec(url || '');
   if (m) return m[1];
+  m = /\/w\/(\d{6,})/i.exec(url || ''); // 微头条 /w/ 格式
+  if (m) return m[1];
   m = /\/i(\d{6,})/i.exec(url || '');
   return m ? m[1] : null;
 }
@@ -327,8 +329,30 @@ async function handleFetchArticle(req, res) {
             let rr = null;
             if (cand.kind === 'info') {
               const j = JSON.parse(cBuf.toString('utf-8'));
-              const content = j && j.data && String(j.data.content || '');
-              if (content && content.replace(/<[^>]+>/g, '').trim()) rr = toutiaoHtmlToResult(content, j.data.title);
+              const d = (j && j.data) || {};
+              let content = String(d.content || '');
+              let title = String(d.title || '');
+              let extraImages = [];
+              // 微头条（/w/ 链接）：正文在 thread.thread_base（纯文本），图片在 large_image_list
+              if (!content.replace(/<[^>]+>/g, '').trim()) {
+                const tb = d.thread && d.thread.thread_base;
+                if (tb) {
+                  content = String(tb.content || tb.title || '');
+                  if (!title) title = String(tb.title || '');
+                  const list = tb.large_image_list;
+                  if (Array.isArray(list)) {
+                    for (const it of list) {
+                      const u = it && typeof it === 'object' ? String(it.url || '') : String(it || '');
+                      if (u && pickArticleImage('<img src="' + u + '">')) extraImages.push(u);
+                    }
+                  }
+                }
+              }
+              if (content && content.replace(/<[^>]+>/g, '').trim()) {
+                rr = toutiaoHtmlToResult(content, title);
+                const allImgs = [...new Set([...(rr.images || []), ...extraImages])].slice(0, 30);
+                rr.images = allImgs;
+              }
             } else {
               const rd = extractToutiaoRenderData(cBuf.toString('utf-8'));
               if (rd) rr = toutiaoHtmlToResult(rd.content, rd.title);

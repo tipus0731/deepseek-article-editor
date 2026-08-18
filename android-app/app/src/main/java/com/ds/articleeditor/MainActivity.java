@@ -252,9 +252,50 @@ public class MainActivity extends Activity {
                             if (root.has("data")) {
                                 JSONObject d = root.getJSONObject("data");
                                 String content = d.optString("content", "");
-                                if (!content.trim().isEmpty()
+                                String title = d.optString("title", "");
+                                JSONArray extraImgs = null;
+                                // 微头条（/w/ 链接）：正文在 thread.thread_base（纯文本），图片在 large_image_list
+                                if (content == null || content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
+                                    if (d.has("thread")) {
+                                        JSONObject tb = d.getJSONObject("thread").optJSONObject("thread_base");
+                                        if (tb != null) {
+                                            String c2 = tb.optString("content", "");
+                                            if (c2 == null || c2.trim().isEmpty()) c2 = tb.optString("title", "");
+                                            content = c2 == null ? "" : c2;
+                                            if (title == null || title.trim().isEmpty()) title = tb.optString("title", "");
+                                            JSONArray lil = tb.optJSONArray("large_image_list");
+                                            if (lil != null) {
+                                                extraImgs = new JSONArray();
+                                                for (int i = 0; i < lil.length(); i++) {
+                                                    String u;
+                                                    JSONObject o = lil.optJSONObject(i);
+                                                    if (o != null) u = o.optString("url", "");
+                                                    else u = lil.optString(i, "");
+                                                    if (!u.isEmpty() && u.startsWith("http")
+                                                            && !u.toLowerCase().contains("emoji")
+                                                            && !u.toLowerCase().contains("logo")
+                                                            && !u.toLowerCase().contains("icon")
+                                                            && !u.toLowerCase().contains("avatar")) {
+                                                        extraImgs.put(u);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (content != null && !content.trim().isEmpty()
                                         && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
-                                    return extractToutiaoHtmlContent(content, d.optString("title", "")).toString();
+                                    JSONObject res = extractToutiaoHtmlContent(content, title);
+                                    if (extraImgs != null && extraImgs.length() > 0) {
+                                        LinkedHashSet<String> seen = new LinkedHashSet<>();
+                                        JSONArray cur = res.optJSONArray("images");
+                                        if (cur != null) for (int i = 0; i < cur.length(); i++) seen.add(cur.optString(i, ""));
+                                        for (int i = 0; i < extraImgs.length(); i++) seen.add(extraImgs.optString(i, ""));
+                                        JSONArray merged = new JSONArray();
+                                        for (String s : seen) { if (merged.length() >= 30) break; merged.put(s); }
+                                        res.put("images", merged);
+                                    }
+                                    return res.toString();
                                 }
                             }
                         } catch (Exception e) {
@@ -389,7 +430,7 @@ public class MainActivity extends Activity {
 
         /** 从头条链接中提取文章 id（/article/123... 或 /i123...） */
         private String extractToutiaoId(String url) {
-            Matcher m = Pattern.compile("/article/(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
+            Matcher m = Pattern.compile("/(?:article|w)/(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
             if (m.find()) return m.group(1);
             m = Pattern.compile("/i(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
             return m.find() ? m.group(1) : null;

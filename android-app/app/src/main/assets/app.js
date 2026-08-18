@@ -283,6 +283,8 @@ function pickImageUrlJs(tag) {
 function toutiaoArticleId(url) {
   let m = /\/article\/(\d{6,})/i.exec(String(url));
   if (m) return m[1];
+  m = /\/w\/(\d{6,})/i.exec(String(url)); // 微头条 /w/ 格式
+  if (m) return m[1];
   m = /\/i(\d{6,})/i.exec(String(url));
   return m ? m[1] : null;
 }
@@ -344,10 +346,29 @@ async function directFetchArticle(url) {
           const buf = new Uint8Array(await res.arrayBuffer());
           if (via.kind === 'info') {
             const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
-            const content = j && j.data && String(j.data.content || '');
+            const d = (j && j.data) || {};
+            let content = String(d.content || '');
+            let title = String(d.title || '');
+            let extraImages = [];
+            // 微头条（/w/ 链接）：正文在 thread.thread_base，图片在 large_image_list
+            if (!content.replace(/<[^>]+>/g, '').trim()) {
+              const tb = d.thread && d.thread.thread_base;
+              if (tb) {
+                content = String(tb.content || tb.title || '');
+                if (!title) title = String(tb.title || '');
+                const list = tb.large_image_list;
+                if (Array.isArray(list)) {
+                  for (const it of list) {
+                    const u = it && typeof it === 'object' ? String(it.url || '') : String(it || '');
+                    if (u && pickImageUrlJs('<img src="' + u + '">')) extraImages.push(u);
+                  }
+                }
+              }
+            }
             if (content && content.replace(/<[^>]+>/g, '').trim()) {
-              const r2 = toutiaoHtmlToResult(content, j.data.title);
-              if (r2.text || r2.images.length) return { title: r2.title, text: r2.text, images: r2.images, url, via: p.name, source: 'toutiao' };
+              const r2 = toutiaoHtmlToResult(content, title);
+              const allImgs = [...new Set([...(r2.images || []), ...extraImages])].slice(0, 30);
+              if (r2.text || allImgs.length) return { title: r2.title, text: r2.text, images: allImgs, url, via: p.name, source: 'toutiao' };
             }
           } else {
             const html = new TextDecoder('utf-8').decode(buf);
@@ -1232,16 +1253,3 @@ function buildDocx(title, blocks) {
     } else if (b.type === 'h') {
       bodyXml.push('<w:p><w:pPr><w:spacing w:before="160" w:after="120"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' + escXml(b.text) + '</w:t></w:r></w:p>');
     } else {
-      bodyXml.push('<w:p><w:r><w:t xml:space="preserve">' + escXml(b.text) + '</w:t></w:r></w:p>');
-    }
-  }
-  const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-    + '<w:body>' + bodyXml.join('')
-    + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
-    + '</w:body></w:document>';
-  const typesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-    + '<Default Extension="xml" ContentType="application/xml"/>'
-    + '<Default Extension="png" ContentType="image/png"/>'
