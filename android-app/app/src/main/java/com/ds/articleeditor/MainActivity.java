@@ -229,6 +229,7 @@ public class MainActivity extends Activity {
 
             // 头条电脑端网页常被“JS 反爬挑战”拦截（_$jsvmprt 脚本），
             // 优先走移动端 info 接口 / RENDER_DATA：标题 + 正文 + 图片一次拿到
+            String ttChannels = "";
             if (isToutiao) {
                 String ttId = extractToutiaoId(urlStr);
                 if (ttId != null) {
@@ -243,12 +244,16 @@ public class MainActivity extends Activity {
                                 return extractToutiaoHtmlContent(content, d.optString("title", "")).toString();
                             }
                         }
-                    } catch (Exception ignored) { /* 尝试下一个通道 */ }
+                    } catch (Exception e) {
+                        ttChannels += "（info接口失败:" + e.getMessage() + "）";
+                    }
                     try {
                         String pageHtml = httpGet("https://m.toutiao.com/i" + ttId + "/", true);
                         JSONObject rd = extractToutiaoRenderData(pageHtml);
                         if (rd != null) return rd.toString();
-                    } catch (Exception ignored) { /* 回退桌面页 */ }
+                    } catch (Exception e) {
+                        ttChannels += "（移动页失败:" + e.getMessage() + "）";
+                    }
                 }
             }
 
@@ -266,6 +271,8 @@ public class MainActivity extends Activity {
 
             int code = conn.getResponseCode();
             if (code != 200) throw new Exception("HTTP " + code);
+            // 必须在 disconnect() 之前读取响应头
+            String contentType = conn.getContentType();
 
             InputStream in = conn.getInputStream();
             String enc = conn.getContentEncoding();
@@ -280,9 +287,16 @@ public class MainActivity extends Activity {
             byte[] bytes = out.toByteArray();
             if (bytes.length > 8 * 1024 * 1024) throw new Exception("页面过大");
 
-            String charset = detectCharset(conn.getContentType(), bytes);
+            String charset = detectCharset(contentType, bytes);
             String html = new String(bytes, charset);
-            return parseArticle(html, isToutiao);
+            try {
+                return parseArticle(html, isToutiao);
+            } catch (Exception pe) {
+                if (isToutiao && !ttChannels.isEmpty()) {
+                    throw new Exception(pe.getMessage() + " " + ttChannels);
+                }
+                throw pe;
+            }
         }
 
         /** 独立 GET 抓取（带超时/UA/Referer），返回文本 */
@@ -304,6 +318,8 @@ public class MainActivity extends Activity {
 
             int code = conn.getResponseCode();
             if (code != 200) throw new Exception("HTTP " + code);
+            // 必须在 disconnect() 之前读取响应头，否则部分设备会抛异常导致通道被跳过
+            String contentType = conn.getContentType();
             InputStream in = conn.getInputStream();
             String enc = conn.getContentEncoding();
             if ("gzip".equalsIgnoreCase(enc)) in = new GZIPInputStream(in);
@@ -315,7 +331,7 @@ public class MainActivity extends Activity {
             conn.disconnect();
             byte[] bytes = out.toByteArray();
             if (bytes.length > 8 * 1024 * 1024) throw new Exception("页面过大");
-            String charset = detectCharset(conn.getContentType(), bytes);
+            String charset = detectCharset(contentType, bytes);
             return new String(bytes, charset);
         }
 
