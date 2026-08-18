@@ -340,6 +340,8 @@ async function directFetchArticle(url) {
   try { ttHost = /(^|\.)toutiao\.com$/i.test(new URL(url).hostname); } catch { /* ignore */ }
   if (ttHost) ttId = toutiaoArticleId(url);
   if (ttId) {
+    // 免费公共代理常被限流（429/408），重试两轮，轮间延时 1.5s
+    for (let round = 0; round < 2; round++) {
     for (const via of [
       { kind: 'info', target: 'https://m.toutiao.com/i' + ttId + '/info/' },
       { kind: 'render', target: 'https://m.toutiao.com/i' + ttId + '/' },
@@ -396,6 +398,8 @@ async function directFetchArticle(url) {
         } catch { /* 下一个代理 */ }
       }
     }
+    if (round === 0) await new Promise((ok) => setTimeout(ok, 1500));
+    }
   }
   let lastErr = null;
   for (const p of PROXIES) {
@@ -417,6 +421,12 @@ async function directFetchArticle(url) {
     } catch (e) {
       lastErr = e;
     }
+  }
+  if (ttHost) {
+    throw new Error(
+      '网页直连模式抓取头条失败：公共代理被限流或拦截（' + (lastErr ? lastErr.message : '未知错误') + '）。' +
+      '头条对无 cookie 请求和代理 IP 限制严格，请改用以下任一方式：① 安装 APK（原生通道最稳）；② 用 node server.js 启动本地服务模式；③ 直接复制文章文本粘贴。'
+    );
   }
   throw new Error(
     '所有公共代理均失败（' + (lastErr ? lastErr.message : '未知错误') + '）。' +
@@ -1245,11 +1255,3 @@ function imageParagraphXml(rid, cx, cy, id) {
   return '<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">'
     + '<wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:docPr id="' + id + '" name="Picture ' + id + '"/>'
     + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
-    + '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="' + id + '" name="image' + id + '.png"/><pic:cNvPicPr/></pic:nvPicPr>'
-    + '<pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
-    + '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
-    + '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
-}
-function buildDocx(title, blocks) {
-  // blocks: [{type:'h'|'p', text} | {type:'img', data:Uint8Array(png), w, h}]
-  const media = [], rels = [];
