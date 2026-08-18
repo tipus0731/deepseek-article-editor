@@ -886,7 +886,7 @@ els.fetchBtn.addEventListener('click', async () => {
       if (nativeFetchTimer) clearTimeout(nativeFetchTimer);
       nativeFetchTimer = setTimeout(() => {
         els.fetchBtn.disabled = false;
-        els.fetchBtn.textContent = '抓取正文';
+        els.fetchBtn.textContent = '抓取正文（首条）';
         flash('原生抓取超时（30 秒），请重试或复制文本粘贴', true);
       }, 30000);
       window.AndroidBridge.fetchArticle(url, cbId);
@@ -910,7 +910,7 @@ els.fetchBtn.addEventListener('click', async () => {
     flash('抓取失败：' + e.message, true);
   } finally {
     els.fetchBtn.disabled = false;
-    els.fetchBtn.textContent = '抓取正文';
+    els.fetchBtn.textContent = '抓取正文（首条）';
   }
 });
 
@@ -961,6 +961,20 @@ els.resetPromptsBtn.addEventListener('click', () => {
   els.imgPrompt.value = '';
   els.dedupPrompt.value = '';
   flash('已恢复默认提示词');
+});
+
+/* 链接输入框一键清除（清空链接与抓取结果） */
+document.getElementById('clearLinkBtn').addEventListener('click', () => {
+  els.linkUrl.value = '';
+  els.linkArticle.classList.add('hidden');
+  els.linkResult.value = '';
+  els.linkTitle.textContent = '';
+  els.linkSourceTag.classList.add('hidden');
+  articleImages = [];
+  els.imgGrid.innerHTML = '';
+  els.imgPanel.classList.add('hidden');
+  updateCounts();
+  flash('已清除链接与抓取内容');
 });
 
 els.sampleBtn.addEventListener('click', () => {
@@ -1035,11 +1049,62 @@ function fillArticle(data) {
 }
 
 let nativeFetchTimer = null;
+const pendingFetches = {}; // 批量处理用：cbId -> {resolve, reject, timer}
+
+/* 抓取一个链接 → Promise（Android 走原生桥，网页走服务/直连） */
+function fetchOne(url) {
+  return new Promise((resolve, reject) => {
+    try {
+      if (IS_ANDROID && window.AndroidBridge && typeof window.AndroidBridge.fetchArticle === 'function') {
+        const cbId = 'b' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        const timer = setTimeout(() => {
+          delete pendingFetches[cbId];
+          reject(new Error('原生抓取超时（30 秒）'));
+        }, 30000);
+        pendingFetches[cbId] = { resolve, reject, timer };
+        window.AndroidBridge.fetchArticle(url, cbId);
+        return;
+      }
+      (async () => {
+        let data;
+        if (DIRECT) {
+          data = await directFetchArticle(url);
+        } else {
+          const res = await fetch('/api/fetch-article', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+          });
+          const j = await res.json().catch(() => null);
+          if (!res.ok) throw new Error((j && j.error) || '抓取失败（HTTP ' + res.status + '）');
+          data = j;
+        }
+        resolve(data);
+      })().catch((e) => reject(e));
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
 window.onNativeFetchArticle = function (cbId, data) {
   if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
+  // 批量通道：按 cbId 路由到对应 Promise
+  if (cbId && pendingFetches[cbId]) {
+    const h = pendingFetches[cbId];
+    delete pendingFetches[cbId];
+    if (h.timer) clearTimeout(h.timer);
+    let d = data;
+    try { if (typeof d === 'string') d = JSON.parse(d); } catch { /* keep */ }
+    if (!d) { h.reject(new Error('抓取失败：返回数据异常')); return; }
+    if (d.error) { h.reject(new Error('抓取失败：' + d.error)); return; }
+    h.resolve(d);
+    return;
+  }
+  // 单条抓取：原有界面逻辑
   if (nativeFetchTimer) { clearTimeout(nativeFetchTimer); nativeFetchTimer = null; }
   els.fetchBtn.disabled = false;
-  els.fetchBtn.textContent = '抓取正文';
+  els.fetchBtn.textContent = '抓取正文（首条）';
   let d = data;
   try { if (typeof d === 'string') d = JSON.parse(d); } catch { /* keep */ }
   if (!d) { flash('抓取失败：返回数据异常', true); return; }
@@ -1180,56 +1245,3 @@ function buildDocx(title, blocks) {
     + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
     + '<Default Extension="xml" ContentType="application/xml"/>'
     + '<Default Extension="png" ContentType="image/png"/>'
-    + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-    + '</Types>';
-  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
-    + '</Relationships>';
-  const docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels.join('') + '</Relationships>';
-  const files = [
-    { name: '[Content_Types].xml', data: utf8Bytes(typesXml) },
-    { name: '_rels/.rels', data: utf8Bytes(rootRels) },
-    { name: 'word/document.xml', data: utf8Bytes(docXml) },
-    { name: 'word/_rels/document.xml.rels', data: utf8Bytes(docRels) },
-  ];
-  for (const m of media) files.push({ name: m.name, data: m.data });
-  return makeZipStore(files);
-}
-
-/* ================= 图片 -> PNG bytes（供 Word 内嵌） ================= */
-function imageToPngBytes(img) {
-  return new Promise((resolve, reject) => {
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0);
-      canvas.toBlob((b) => {
-        if (!b) { reject(new Error('图片转换失败（可能跨域受限）')); return; }
-        b.arrayBuffer().then((ab) => resolve({ data: new Uint8Array(ab), w: canvas.width, h: canvas.height }))
-          .catch((e) => reject(e));
-      }, 'image/png');
-    } catch (e) { reject(new Error('图片转换失败：' + e.message)); }
-  });
-}
-async function loadImgForDocx(src) {
-  const img = await loadImageWithFallback(src);
-  return imageToPngBytes(img);
-}
-
-/* ================= 图片去水印（本地 canvas 裁切，不上传） ================= */
-let articleImages = []; // { url, status: 'orig'|'done'|'fail', blobUrl }
-
-function loadImageForCanvas(url) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.referrerPolicy = 'no-referrer';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('图片加载失败'));
-    img.src = url;
-  });
-}

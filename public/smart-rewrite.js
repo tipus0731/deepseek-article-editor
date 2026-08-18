@@ -254,10 +254,111 @@
     }
   }
 
+  /* ================= 多链接批量处理：逐条抓取 → 改写 → 导出含图 Word ================= */
+  function parseLinks() {
+    const raw = String(document.getElementById('linkUrl').value || '');
+    const seen = new Set();
+    const urls = [];
+    for (const seg of raw.split(/[\s,，;；]+/)) {
+      const u = seg.trim();
+      if (/^https?:\/\//i.test(u) && !seen.has(u)) { seen.add(u); urls.push(u); }
+    }
+    return urls;
+  }
+  function safeDocxName(title, index) {
+    let n = String(title || '').trim().replace(/[\\/:*?"<>|\s]+/g, '_');
+    n = n.replace(/[ -]/g, '');
+    if (!n) n = '文章' + (index + 1);
+    if (n.length > 40) n = n.slice(0, 40);
+    return n + '.docx';
+  }
+
+  async function runBatchLinks() {
+    if (window.__batchBusy) return;
+    if (isExpired()) { setStatus('软件已到期（2026-08-20），功能已停止使用', 'error'); return; }
+    const urls = parseLinks();
+    if (!urls.length) {
+      logAuto('⚠ 链接框为空或没有有效的 http(s) 链接，请粘贴链接（每行一个）');
+      return;
+    }
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (apiKey) storeSet('dsw_apikey', apiKey);
+    const model = document.getElementById('model').value;
+
+    window.__batchBusy = true;
+    const btn = document.getElementById('batchBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '批量处理中…'; }
+    const logEl = document.getElementById('autoLog');
+    logEl.classList.remove('hidden');
+
+    logAuto('📚 开始批量处理 ' + urls.length + ' 个链接（按序逐条抓取 → AI 改写 → 导出 Word）');
+    const ok = [], fail = [];
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      setStatus('正在处理第 ' + (i + 1) + '/' + urls.length + ' 篇…', 'loading');
+      logAuto('—— [' + (i + 1) + '/' + urls.length + '] ' + url + ' ——');
+      try {
+        const data = await fetchOne(url);
+        if (!data) throw new Error('没有获取到内容');
+        const articleText = String(data.text || '').trim();
+        if (!articleText) throw new Error('抓取到的正文为空');
+        const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
+        logAuto('✅ 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
+
+        // 图片 → Word 可嵌入 PNG
+        const pngImages = [];
+        for (const src of imgs) {
+          try {
+            const png = await loadImgForDocx(src);
+            pngImages.push({ type: 'img', data: png.data, w: png.w, h: png.h });
+          } catch (e) {
+            logAuto('⚠ 图片跳过：' + e.message);
+          }
+        }
+
+        // AI 改写（复用当前全部修改条件 + 图片占位要求）
+        logAuto('⏳ 调用 AI 改写中（' + (model === 'deepseek-reasoner' ? '思考模型' : '快速模型') + '）…');
+        const messages = buildSmartMessages(articleText, null);
+        outputText = '';
+        await streamRewrite({ apiKey, model, messages }, new AbortController().signal);
+        const out = String(outputText || '').trim();
+        if (!out) throw new Error('AI 未返回内容');
+
+        // 生成并保存 Word（图片按文章中的 [图片] 位置嵌入）
+        const blocks = splitBlocksForDocx(out, pngImages);
+        const docxName = safeDocxName(data.title, i);
+        const docxBuf = buildDocx(data.title || '生成文章', blocks);
+        logAuto('📄 保存 Word：' + docxName + '（' + pngImages.length + ' 张图片）…');
+        await downloadDocx(docxBuf, docxName);
+        ok.push({ url, title: data.title, images: pngImages.length });
+        logAuto('💾 已保存：' + docxName);
+      } catch (e) {
+        fail.push({ url, err: e.message });
+        logAuto('❌ 第 ' + (i + 1) + ' 条失败：' + e.message);
+      }
+    }
+    window.__batchBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '📚 批量生成 Word'; }
+    setStatus(
+      '✅ 批量完成：成功 ' + ok.length + ' 篇，失败 ' + fail.length + ' 篇（共 ' + urls.length + ' 条链接）',
+      fail.length ? 'error' : ''
+    );
+    if (fail.length) {
+      logAuto('失败明细：');
+      fail.forEach((f) => logAuto('  ✗ ' + f.url + ' → ' + f.err));
+    } else {
+      logAuto('🎉 全部完成，Word 已导出（Android 在「下载 / DeepSeek文章助手」，网页在浏览器下载目录）。');
+    }
+  }
+
   window.runSmartRewrite = runSmartRewrite;
+  window.runBatchLinks = runBatchLinks;
   initSaveButton();
   updateSaveHint();
   if (document.getElementById('smartBtn')) {
     document.getElementById('smartBtn').addEventListener('click', runSmartRewrite);
+  }
+  if (document.getElementById('batchBtn')) {
+    document.getElementById('batchBtn').addEventListener('click', runBatchLinks);
   }
 })();

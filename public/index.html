@@ -51,10 +51,14 @@
 
       <div class="tabpane hidden" id="pane-link">
         <div class="link-row">
-          <input id="linkUrl" class="input-box inline" type="url" placeholder="https://www.toutiao.com/article/… 或任意文章链接" spellcheck="false">
-          <button id="fetchBtn" class="btn primary" type="button">抓取正文</button>
+          <textarea id="linkUrl" class="input-box inline link-src" rows="2" placeholder="粘贴链接，每行一个；支持多条链接批量处理…" spellcheck="false"></textarea>
         </div>
-        <p class="hint">今日头条链接将提取 article-content 正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+        <div class="link-row">
+          <button id="clearLinkBtn" class="btn ghost sm" type="button">🧹 清除全部</button>
+          <button id="fetchBtn" class="btn primary" type="button">抓取正文（首条）</button>
+          <button id="batchBtn" class="btn primary sm" type="button" title="依次抓取每条链接 → AI 按修改条件改写 → 自动导出含图片的 Word">📚 批量生成 Word</button>
+        </div>
+        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「批量生成 Word」会逐条抓取、改写并导出 Word，每条文章都嵌入自己的配图。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
 
         <div id="linkArticle" class="hidden">
           <div class="article-meta">

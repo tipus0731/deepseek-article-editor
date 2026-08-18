@@ -123,7 +123,8 @@ main {
 }
 .input-box.inline { min-height: 0; width: auto; flex: 1; padding: 8px 12px; }
 .input-box:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79, 110, 242, .12); background: #fff; }
-.link-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.link-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.link-src { min-height: 60px; resize: vertical; }
 .hint { font-size: 12px; color: var(--muted); margin: 4px 0 10px; }
 .char-line {
   display: flex; justify-content: space-between; align-items: center;
