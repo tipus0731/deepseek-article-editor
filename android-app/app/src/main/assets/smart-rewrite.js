@@ -22,7 +22,8 @@
 
   function splitBlocksForDocx(text, images) {
     const blocks = [];
-    const parts = String(text).split(/\[图片\]/g);
+    // 同时识别半角/全角图片标记；带捕获组的 split：奇数为标记位，偶数为正文段
+    const parts = String(text).split(/(\[图片\]|【图片】)/g);
     let imgIdx = 0;
     const paragraphize = (t) => {
       const raw = String(t).split(/\n+/).map((s) => s.trim()).filter(Boolean);
@@ -32,12 +33,62 @@
       }
     };
     parts.forEach((seg, i) => {
-      if (i > 0 && imgIdx < images.length) {
-        blocks.push(images[imgIdx++]);
+      if (i % 2 === 1) {
+        if (imgIdx < images.length) blocks.push(images[imgIdx++]);
+        return;
       }
       paragraphize(seg);
     });
+    // 全部图片必进 Word：正文未占位的追加到末尾
+    while (imgIdx < images.length) blocks.push(images[imgIdx++]);
     return blocks;
+  }
+
+  /* 单张图片 → Word PNG 块：
+   * 1) 已去水印的（blobUrl）优先；
+   * 2) 否则按当前水印位置/比例自动裁切；
+   * 3) 裁切失败回退原图。 */
+  function pngFromItem(item, wmPos, wmRatio) {
+    if (item && item.blobUrl) {
+      return loadImgForDocx(item.blobUrl).catch(() => autoCropOrOriginal(item, wmPos, wmRatio));
+    }
+    return autoCropOrOriginal(item, wmPos, wmRatio);
+  }
+  async function autoCropOrOriginal(item, wmPos, wmRatio) {
+    if (!item || !item.url) throw new Error('无图片地址');
+    try {
+      const blob = await cropImageToBlob(item.url, wmPos, wmRatio);
+      const burl = URL.createObjectURL(blob);
+      try {
+        const png = await loadImgForDocx(burl);
+        setTimeout(() => URL.revokeObjectURL(burl), 60000);
+        return png;
+      } catch (e) {
+        URL.revokeObjectURL(burl);
+        throw e;
+      }
+    } catch (e) {
+      return loadImgForDocx(item.url);
+    }
+  }
+
+  /* 批量准备图片块：items=[{url, blobUrl}] → [{type:'img', data, w, h}] */
+  async function preparePngImages(items, opts) {
+    const out = [];
+    const list = items || [];
+    const wmPos = (opts && opts.wmPos) || document.getElementById('wmPos').value;
+    const wmRatio = (opts && opts.wmRatio) != null
+      ? opts.wmRatio
+      : Number(document.getElementById('wmRatio').value) / 100;
+    for (let i = 0; i < list.length; i++) {
+      try {
+        const png = await pngFromItem(list[i], wmPos, wmRatio);
+        out.push({ type: 'img', data: png.data, w: png.w, h: png.h });
+      } catch (e) {
+        if (opts && opts.log) opts.log('⚠ 第 ' + (i + 1) + ' 张图片跳过：' + e.message);
+      }
+    }
+    return out;
   }
 
   async function downloadDocx(buffer, name) {
@@ -128,25 +179,13 @@
       btn.disabled = true;
       btn.textContent = '导出中…';
       try {
-        let buffer, name;
-        if (lastDocx) {
-          buffer = lastDocx.buffer;
-          name = lastDocx.name;
-        } else {
-          const text = outputText || '';
-          if (!text.trim()) throw new Error('当前没有可导出的内容，请先点击「开始修改」或「智能改写」生成文章');
-          // 用当前图片（优先已去水印）生成含图 Word
-          const pngImages = [];
-          for (const src of (articleImages || []).map((x) => x.blobUrl || x.url)) {
-            try {
-              const png = await loadImgForDocx(src);
-              pngImages.push({ type: 'img', data: png.data, w: png.w, h: png.h });
-            } catch { /* 跳过失败图片 */ }
-          }
-          const blocks = splitBlocksForDocx(text, pngImages);
-          buffer = buildDocx('生成文章', blocks);
-          name = '生成文章.docx';
-        }
+        // 始终用“当前状态”重建 Word：已裁切用裁切图，未裁切自动裁切，保证图片最新且必进文档
+        const text = outputText || '';
+        if (!text.trim()) throw new Error('当前没有可导出的内容，请先点击「开始修改」或「智能改写」生成文章');
+        const pngImages = await preparePngImages(articleImages || []);
+        const blocks = splitBlocksForDocx(text, pngImages);
+        const buffer = buildDocx('生成文章', blocks);
+        const name = lastDocx ? lastDocx.name : '生成文章.docx';
         await downloadDocx(buffer, name);
         logAuto('💾 已保存：' + name);
       } catch (e) {
@@ -175,19 +214,14 @@
     logEl.classList.remove('hidden');
     logEl.innerHTML = '';
 
-    // 图片源：优先已去水印的 blob，其次原图 URL
-    const picSources = (articleImages || []).map((x) => x.blobUrl || x.url);
+    // 图片源：已去水印的用裁切结果，其余按当前水印设置自动裁切，失败回退原图
+    const imgItems = articleImages || [];
     let pngImages = [];
-    if (picSources.length) {
-      logAuto('正在准备 ' + picSources.length + ' 张图片（转换为 Word 可嵌入格式）…');
-      for (let i = 0; i < picSources.length; i++) {
-        try {
-          const png = await loadImgForDocx(picSources[i]);
-          pngImages.push({ type: 'img', data: png.data, w: png.w, h: png.h });
-        } catch (e) {
-          logAuto('⚠ 第 ' + (i + 1) + ' 张图片跳过：' + e.message);
-        }
-      }
+    if (imgItems.length) {
+      logAuto('正在准备 ' + imgItems.length + ' 张图片（裁切去水印 + 转换 Word 格式）…');
+      pngImages = await preparePngImages(imgItems, { log: logAuto });
+      const failed = imgItems.length - pngImages.length;
+      logAuto('图片就绪：' + pngImages.length + '/' + imgItems.length + ' 张' + (failed ? '（跳过 ' + failed + ' 张）' : ''));
     }
 
     const apiKey = document.getElementById('apiKey').value.trim();
@@ -267,7 +301,7 @@
   }
   function safeDocxName(title, index) {
     let n = String(title || '').trim().replace(/[\\/:*?"<>|\s]+/g, '_');
-    n = n.replace(/[ -]/g, '');
+    n = n.replace(/[\u0000-\u001f]/g, '');
     if (!n) n = '文章' + (index + 1);
     if (n.length > 40) n = n.slice(0, 40);
     return n + '.docx';
@@ -305,16 +339,9 @@
         const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
         logAuto('✅ 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
 
-        // 图片 → Word 可嵌入 PNG
-        const pngImages = [];
-        for (const src of imgs) {
-          try {
-            const png = await loadImgForDocx(src);
-            pngImages.push({ type: 'img', data: png.data, w: png.w, h: png.h });
-          } catch (e) {
-            logAuto('⚠ 图片跳过：' + e.message);
-          }
-        }
+        // 图片 → 自动裁切水印 + Word 可嵌入 PNG（每条文章用自己的配图）
+        const items = imgs.map((u) => ({ url: u, blobUrl: '' }));
+        const pngImages = await preparePngImages(items, { log: logAuto });
 
         // AI 改写（复用当前全部修改条件 + 图片占位要求）
         logAuto('⏳ 调用 AI 改写中（' + (model === 'deepseek-reasoner' ? '思考模型' : '快速模型') + '）…');
