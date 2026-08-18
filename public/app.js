@@ -58,6 +58,30 @@ function storeRemove(key) {
 }
 const IS_ANDROID = typeof window.AndroidBridge !== 'undefined';
 
+/* ================= 软件试用期限制（到期禁用） =================
+ * 到期时间：2026-08-20 00:00（北京时间）= 2026-08-19T16:00:00Z
+ * 到期后：页面弹遮罩、按钮禁用，核心函数全部拦截（改日期请改下面这一处）。
+ */
+const EXPIRY_MS = Date.parse('2026-08-19T16:00:00Z'); // 1787155200000
+function isExpired() { return Date.now() >= EXPIRY_MS; }
+function enforceExpiry() {
+  if (!isExpired()) return false;
+  document.body.classList.add('expired-lock');
+  const ov = document.createElement('div');
+  ov.id = 'expiryOverlay';
+  ov.innerHTML =
+    '<div class="expiry-box">' +
+    '<div class="expiry-title">🚫 软件已到期</div>' +
+    '<p>本软件试用期已于 <b>2026年8月20日</b> 到期，功能已停止使用。</p>' +
+    '<p>如需继续使用，请联系开发者授权。</p>' +
+    '</div>';
+  document.body.appendChild(ov);
+  ['runBtn', 'smartBtn', 'saveWordBtn', 'fetchBtn', 'copyBtn', 'downloadBtn', 'useTextBtn', 'cropAllBtn', 'downloadAllBtn', 'sampleBtn']
+    .forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = true; });
+  return true;
+}
+enforceExpiry();
+
 // Android 打包版：把 Blob 转 base64 交给原生桥保存到相册/下载目录（分块传输，大文件安全）
 function saveBlobAndroid(blob, name, kind) {
   return new Promise((resolve, reject) => {
@@ -256,6 +280,7 @@ function pickImageUrlJs(tag) {
   return url.trim();
 }
 async function directFetchArticle(url) {
+  if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let lastErr = null;
   for (const p of PROXIES) {
     try {
@@ -442,6 +467,7 @@ function buildMessages(text) {
 
 /* ================= 流式调用 DeepSeek ================= */
 async function streamRewrite(body, signal) {
+  if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let res;
   if (DIRECT) {
     // 直连模式：浏览器直接调用 DeepSeek 官网 API
@@ -546,6 +572,7 @@ function resetOutput() {
 }
 
 async function runRewrite() {
+  if (isExpired()) { flash('软件已到期（2026-08-20），功能已停止使用', true); return; }
   if (running) return;
   const text = getSourceText();
   if (!text) return;
@@ -766,6 +793,7 @@ els.inputText.addEventListener('input', updateCounts);
 els.linkResult.addEventListener('input', updateCounts);
 
 els.fetchBtn.addEventListener('click', async () => {
+  if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
   const url = els.linkUrl.value.trim();
   if (!/^https?:\/\//i.test(url)) { flash('请输入有效的 http(s) 链接', true); return; }
   els.fetchBtn.disabled = true;
@@ -928,6 +956,7 @@ function fillArticle(data) {
 
 let nativeFetchTimer = null;
 window.onNativeFetchArticle = function (cbId, data) {
+  if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
   if (nativeFetchTimer) { clearTimeout(nativeFetchTimer); nativeFetchTimer = null; }
   els.fetchBtn.disabled = false;
   els.fetchBtn.textContent = '抓取正文';

@@ -2,6 +2,7 @@ package com.ds.articleeditor;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.net.Uri;
@@ -87,6 +88,17 @@ public class MainActivity extends Activity {
                 return true;
             }
         });
+
+        // 软件试用期限制：2026-08-20 00:00（北京时间）到期后在原生层直接拦截，不加载应用
+        if (System.currentTimeMillis() >= 1787155200000L) {
+            new AlertDialog.Builder(this)
+                    .setTitle("软件已到期")
+                    .setMessage("本软件试用期已于 2026年8月20日 到期，功能已停止使用。\n如需继续使用，请联系开发者授权。")
+                    .setPositiveButton("退出", (d, w) -> finish())
+                    .setCancelable(false)
+                    .show();
+            return;
+        }
 
         webView.addJavascriptInterface(new Bridge(), "AndroidBridge");
         webView.loadUrl("file:///android_asset/index.html");

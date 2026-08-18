@@ -123,6 +123,7 @@
   /* ---- 保存按钮（常驻）：优先用智能改写结果，否则用当前输出即时生成 ---- */
   function initSaveButton() {
     document.getElementById('saveWordBtn').onclick = async () => {
+      if (isExpired()) { logAuto('❌ 软件已到期，功能已停止使用'); return; }
       const btn = document.getElementById('saveWordBtn');
       btn.disabled = true;
       btn.textContent = '导出中…';
@@ -162,6 +163,7 @@
   }
 
   async function runSmartRewrite() {
+    if (isExpired()) { setStatus('软件已到期（2026-08-20），功能已停止使用', 'error'); return; }
     if (window.__smartBusy) return;
     const original = getSourceText();
     if (!original) return;

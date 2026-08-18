@@ -58,6 +58,30 @@ function storeRemove(key) {
 }
 const IS_ANDROID = typeof window.AndroidBridge !== 'undefined';
 
+/* ================= 软件试用期限制（到期禁用） =================
+ * 到期时间：2026-08-20 00:00（北京时间）= 2026-08-19T16:00:00Z
+ * 到期后：页面弹遮罩、按钮禁用，核心函数全部拦截（改日期请改下面这一处）。
+ */
+const EXPIRY_MS = Date.parse('2026-08-19T16:00:00Z'); // 1787155200000
+function isExpired() { return Date.now() >= EXPIRY_MS; }
+function enforceExpiry() {
+  if (!isExpired()) return false;
+  document.body.classList.add('expired-lock');
+  const ov = document.createElement('div');
+  ov.id = 'expiryOverlay';
+  ov.innerHTML =
+    '<div class="expiry-box">' +
+    '<div class="expiry-title">🚫 软件已到期</div>' +
+    '<p>本软件试用期已于 <b>2026年8月20日</b> 到期，功能已停止使用。</p>' +
+    '<p>如需继续使用，请联系开发者授权。</p>' +
+    '</div>';
+  document.body.appendChild(ov);
+  ['runBtn', 'smartBtn', 'saveWordBtn', 'fetchBtn', 'copyBtn', 'downloadBtn', 'useTextBtn', 'cropAllBtn', 'downloadAllBtn', 'sampleBtn']
+    .forEach((id) => { const b = document.getElementById(id); if (b) b.disabled = true; });
+  return true;
+}
+enforceExpiry();
+
 // Android 打包版：把 Blob 转 base64 交给原生桥保存到相册/下载目录（分块传输，大文件安全）
 function saveBlobAndroid(blob, name, kind) {
   return new Promise((resolve, reject) => {
@@ -256,6 +280,7 @@ function pickImageUrlJs(tag) {
   return url.trim();
 }
 async function directFetchArticle(url) {
+  if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let lastErr = null;
   for (const p of PROXIES) {
     try {
@@ -442,6 +467,7 @@ function buildMessages(text) {
 
 /* ================= 流式调用 DeepSeek ================= */
 async function streamRewrite(body, signal) {
+  if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let res;
   if (DIRECT) {
     // 直连模式：浏览器直接调用 DeepSeek 官网 API
@@ -546,6 +572,7 @@ function resetOutput() {
 }
 
 async function runRewrite() {
+  if (isExpired()) { flash('软件已到期（2026-08-20），功能已停止使用', true); return; }
   if (running) return;
   const text = getSourceText();
   if (!text) return;
@@ -766,6 +793,7 @@ els.inputText.addEventListener('input', updateCounts);
 els.linkResult.addEventListener('input', updateCounts);
 
 els.fetchBtn.addEventListener('click', async () => {
+  if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
   const url = els.linkUrl.value.trim();
   if (!/^https?:\/\//i.test(url)) { flash('请输入有效的 http(s) 链接', true); return; }
   els.fetchBtn.disabled = true;
@@ -928,6 +956,7 @@ function fillArticle(data) {
 
 let nativeFetchTimer = null;
 window.onNativeFetchArticle = function (cbId, data) {
+  if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
   if (nativeFetchTimer) { clearTimeout(nativeFetchTimer); nativeFetchTimer = null; }
   els.fetchBtn.disabled = false;
   els.fetchBtn.textContent = '抓取正文';
@@ -1207,85 +1236,3 @@ function renderImgGrid() {
     bView.className = 'btn ghost sm'; bView.type = 'button'; bView.textContent = '原图';
     bView.onclick = () => window.open(item.url, '_blank');
     acts.appendChild(bCrop); acts.appendChild(bDl); acts.appendChild(bView);
-    card.appendChild(wrap); card.appendChild(info); card.appendChild(acts);
-    els.imgGrid.appendChild(card);
-  });
-  els.cropAllBtn.textContent = '✂ 一键去水印（' + articleImages.length + ' 张）';
-}
-async function processOne(i) {
-  const item = articleImages[i];
-  if (!item || item.status === 'processing') return;
-  item.status = 'processing';
-  renderImgGrid();
-  try {
-    const blob = await cropImageToBlob(item.url, els.wmPos.value, Number(els.wmRatio.value) / 100);
-    if (item.blobUrl) URL.revokeObjectURL(item.blobUrl);
-    item.blobUrl = URL.createObjectURL(blob);
-    item.status = 'done';
-  } catch (e) {
-    item.status = 'fail';
-    item.err = e.message;
-    flash('第 ' + (i + 1) + ' 张图片处理失败：' + e.message, true);
-  }
-  renderImgGrid();
-}
-async function processAll() {
-  for (let i = 0; i < articleImages.length; i++) {
-    if (articleImages[i].status === 'done') continue;
-    await processOne(i);
-  }
-  const done = articleImages.filter((x) => x.status === 'done').length;
-  flash('处理完成：' + done + '/' + articleImages.length + ' 张已去水印');
-}
-function downloadOne(i) {
-  const item = articleImages[i];
-  if (!item || !item.blobUrl) { flash(item && item.status === 'fail' ? '该图片处理失败，无法下载' : '请先对该图片执行去水印', true); return; }
-  if (IS_ANDROID) {
-    fetch(item.blobUrl)
-      .then((r) => r.blob())
-      .then((b) => saveBlobAndroid(b, '去水印图片_' + (i + 1) + '.webp', 'image'))
-      .then(() => flash('已保存到相册 /DeepSeek文章助手'))
-      .catch((e) => flash('保存失败：' + e.message, true));
-    return;
-  }
-  const a = document.createElement('a');
-  a.href = item.blobUrl;
-  a.download = '去水印图片_' + (i + 1) + (item.blobUrl.startsWith('blob:') ? '.webp' : '.jpg');
-  a.click();
-}
-function downloadAll() {
-  const dones = articleImages.map((x, i) => ({ x, i })).filter((o) => o.x.status === 'done');
-  if (!dones.length) { flash('请先执行「一键去水印」', true); return; }
-  if (IS_ANDROID) {
-    let count = 0;
-    dones.forEach((o) => {
-      fetch(o.x.blobUrl)
-        .then((r) => r.blob())
-        .then((b) => saveBlobAndroid(b, '去水印图片_' + (o.i + 1) + '.webp', 'image'))
-        .then(() => { count++; if (count === dones.length) flash('已保存 ' + count + ' 张到相册'); })
-        .catch(() => { count++; });
-    });
-    return;
-  }
-  dones.forEach((o, k) => setTimeout(() => {
-    const a = document.createElement('a');
-    a.href = o.x.blobUrl;
-    a.download = '去水印图片_' + (k + 1) + '.webp';
-    a.click();
-  }, k * 400));
-}
-
-/* ================= 图片相关事件 ================= */
-els.wmRatio.addEventListener('input', () => {
-  els.wmRatioVal.textContent = els.wmRatio.value + '%';
-});
-els.cropAllBtn.addEventListener('click', processAll);
-els.downloadAllBtn.addEventListener('click', downloadAll);
-els.useTextBtn.addEventListener('click', () => {
-  const t = els.linkResult.value.trim();
-  if (!t) { flash('链接页暂无正文，请先抓取', true); return; }
-  els.inputText.value = t;
-  switchTab('paste');
-  updateCounts();
-  flash('文章文本已填入「粘贴文本」，可设置修改条件后开始修改');
-});
