@@ -237,12 +237,19 @@ async function handleRewrite(req, res) {
   }
   const model = typeof body.model === 'string' && body.model ? body.model : 'deepseek-chat';
 
+  // 支持自定义 OpenAI 兼容供应商：body.apiBase 覆盖默认地址，body.reasoning_effort 透传思考强度
+  const upstreamBase = (typeof body.apiBase === 'string' && /^https?:\/\//i.test(body.apiBase))
+    ? body.apiBase.replace(/\/+$/, '')
+    : DEEPSEEK_BASE;
+  const effort = typeof body.reasoning_effort === 'string' ? body.reasoning_effort : '';
+
   const payload = { model, messages: body.messages, stream: true, temperature: 1.0 };
   if (model === 'deepseek-chat') payload.max_tokens = 8192; // reasoner 使用其默认输出上限
+  if (effort && /^(low|medium|high)$/.test(effort)) payload.reasoning_effort = effort;
 
   let upstream;
   try {
-    upstream = await fetch(DEEPSEEK_BASE + '/chat/completions', {
+    upstream = await fetch(upstreamBase + '/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

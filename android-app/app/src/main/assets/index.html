@@ -23,9 +23,9 @@
       <input type="password" id="apiKey" placeholder="DeepSeek API Key (sk-…)" autocomplete="off" spellcheck="false">
       <button id="toggleKey" type="button" title="显示/隐藏">👁</button>
     </div>
-    <select id="model" title="选择模型">
-      <option value="deepseek-chat">deepseek-chat（快速）</option>
-      <option value="deepseek-reasoner">deepseek-reasoner（深度思考，较慢）</option>
+    <select id="model" title="选择模型版本">
+      <option value="deepseek-reasoner">DeepSeek Pro（深度思考）</option>
+      <option value="deepseek-chat">DeepSeek V4 Flash（快速）</option>
     </select>
   </div>
 </header>
@@ -163,6 +163,41 @@
         <span>✍️ 自定义修改要求（选填）</span>
         <textarea id="customReq" rows="2" placeholder="例如：删除第一段；结尾加上行动呼吁；突出环保主题；把全文改写为第三人称…"></textarea>
       </label>
+    </section>
+
+    <!-- ============ 模型与接口（本地存储，不受 APK 版本更新影响） ============ -->
+    <section class="card prompt-card">
+      <details>
+        <summary>🤖 模型与接口设置（存本地 · 升级不丢）</summary>
+        <div class="prompt-body">
+          <div class="checks">
+            <label><input type="checkbox" id="thinking" checked> 思考模式（默认开启）</label>
+          </div>
+          <label class="field hidden" id="effortField">
+            <span>思考强度档位</span>
+            <select id="effort">
+              <option value="max" selected>MAX（最强思考）</option>
+              <option value="high">高</option>
+              <option value="medium">中</option>
+              <option value="low">低</option>
+            </select>
+          </label>
+          <p class="hint">模型版本在右上角选择：DeepSeek Pro（深度思考） / DeepSeek V4 Flash（快速）；开启思考模式后自动使用 Pro。</p>
+          <label class="field">
+            <span>自定义供应商 API 地址（OpenAI 兼容，留空=DeepSeek 官方）</span>
+            <input id="apiBase" type="text" placeholder="https://api.deepseek.com" spellcheck="false">
+          </label>
+          <label class="field">
+            <span>自定义模型名（可选，留空=用上方所选模型）</span>
+            <input id="customModel" type="text" placeholder="例如：gpt-4o / qwen-max…" spellcheck="false">
+          </label>
+          <div class="prompt-actions">
+            <button id="saveModelBtn" class="btn primary sm" type="button">💾 保存设置</button>
+            <button id="resetModelBtn" class="btn ghost sm" type="button">恢复默认</button>
+            <span class="prompt-hint">保存后写入本地存储（APK 升级不丢失）；自定义接口支持任意 OpenAI 兼容供应商</span>
+          </div>
+        </div>
+      </details>
     </section>
 
     <!-- ============ 提示词设置（本地存储，不受 APK 版本更新影响） ============ -->

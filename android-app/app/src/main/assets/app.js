@@ -21,6 +21,9 @@ const els = {
   reasonBox: $('reasonBox'), reasonText: $('reasonText'),
   sampleBtn: $('sampleBtn'),
   modeBanner: $('modeBanner'),
+  thinking: $('thinking'), effort: $('effort'), effortField: $('effortField'),
+  apiBase: $('apiBase'), customModel: $('customModel'),
+  saveModelBtn: $('saveModelBtn'), resetModelBtn: $('resetModelBtn'),
   linkArticle: $('linkArticle'), linkTitle: $('linkTitle'), linkSourceTag: $('linkSourceTag'),
   sysPrompt: $('sysPrompt'), imgPrompt: $('imgPrompt'), dedupPrompt: $('dedupPrompt'),
   savePromptsBtn: $('savePromptsBtn'), resetPromptsBtn: $('resetPromptsBtn'),
@@ -596,13 +599,22 @@ async function streamRewrite(body, signal) {
   if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let res;
   if (DIRECT) {
-    // 直连模式：浏览器直接调用 DeepSeek 官网 API
+    // 直连模式：默认 DeepSeek 官方，也支持自定义 OpenAI 兼容供应商
     const apiKey = String(body.apiKey || '').trim();
-    if (!apiKey) throw new Error('请先在右上角填写 DeepSeek API Key（sk-...）');
-    const payload = { model: body.model, messages: body.messages, stream: true, temperature: 1.0 };
-    if (body.model === 'deepseek-chat') payload.max_tokens = 8192;
+    if (!apiKey) throw new Error('请先在右上角填写 API Key（sk-...）');
+    const apiBase = (String(els.apiBase.value || '').trim().replace(/\/+$/, '') || API_BASE);
+    if (!/^https?:\/\//i.test(apiBase)) throw new Error('API 地址格式无效，需以 http(s):// 开头');
+    const model = (String(els.customModel.value || '').trim()) || body.model;
+    const payload = { model: model, messages: body.messages, stream: true, temperature: 1.0 };
+    if (model === 'deepseek-chat') payload.max_tokens = 8192;
+    // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-reasoner 自带思考，不传该参数）
+    if (els.thinking.checked && !/api\.deepseek\.com$/i.test(apiBase)) {
+      const map = { max: 'high', high: 'high', medium: 'medium', low: 'low' };
+      const lv = map[els.effort.value] || 'high';
+      payload.reasoning_effort = lv;
+    }
     try {
-      res = await fetch(API_BASE + '/chat/completions', {
+      res = await fetch(apiBase + '/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -616,12 +628,17 @@ async function streamRewrite(body, signal) {
       throw new Error('无法连接 api.deepseek.com：' + e.message + '。请检查网络；若浏览器拦截跨域（CORS），请改用 node server.js 启动本地服务模式。');
     }
   } else {
-    // 服务模式：经本地服务转发
+    // 服务模式：经本地服务转发（附带供应商地址与思考强度）
+    const apiBase = String(els.apiBase.value || '').trim();
+    const effort = (els.thinking.checked && /^https?:\/\//i.test(apiBase) && !/api\.deepseek\.com$/i.test(apiBase))
+      ? ({ max: 'high', high: 'high', medium: 'medium', low: 'low' }[els.effort.value] || 'high')
+      : '';
+    const srvBody = Object.assign({}, body, { apiBase: apiBase || undefined, reasoning_effort: effort || undefined });
     try {
       res = await fetch('/api/rewrite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(srvBody),
         signal,
       });
     } catch (e) {
@@ -993,6 +1010,41 @@ function loadPromptSettings() {
   els.imgPrompt.value = img || '';
   els.dedupPrompt.value = dedup || '';
 }
+/* ---- 模型与接口设置（本地存储） ---- */
+function loadModelSettings() {
+  const t = storeGet('dsw_thinking');
+  els.thinking.checked = t === null ? true : t === '1';
+  const e = storeGet('dsw_effort') || 'max';
+  els.effort.value = ['max', 'high', 'medium', 'low'].includes(e) ? e : 'max';
+  els.apiBase.value = storeGet('dsw_api_base') || '';
+  els.customModel.value = storeGet('dsw_custom_model') || '';
+  syncThinkingUI();
+}
+function syncThinkingUI() {
+  // 思考模式开启 → Pro（reasoner）；关闭 → Flash（chat）
+  els.model.value = els.thinking.checked ? 'deepseek-reasoner' : 'deepseek-chat';
+  els.effortField.classList.toggle('hidden', !els.thinking.checked);
+}
+els.thinking.addEventListener('change', () => { syncThinkingUI(); storeSet('dsw_thinking', els.thinking.checked ? '1' : '0'); });
+els.effort.addEventListener('change', () => storeSet('dsw_effort', els.effort.value));
+els.saveModelBtn.addEventListener('click', () => {
+  storeSet('dsw_thinking', els.thinking.checked ? '1' : '0');
+  storeSet('dsw_effort', els.effort.value);
+  storeSet('dsw_api_base', els.apiBase.value.trim());
+  storeSet('dsw_custom_model', els.customModel.value.trim());
+  flash('模型设置已保存到本地（升级 APK 不丢失）');
+});
+els.resetModelBtn.addEventListener('click', () => {
+  storeRemove('dsw_thinking'); storeRemove('dsw_effort');
+  storeRemove('dsw_api_base'); storeRemove('dsw_custom_model');
+  els.thinking.checked = true;
+  els.effort.value = 'max';
+  els.apiBase.value = '';
+  els.customModel.value = '';
+  syncThinkingUI();
+  flash('已恢复默认模型设置');
+});
+
 els.savePromptsBtn.addEventListener('click', () => {
   storeSet('dsw_sys_prompt', els.sysPrompt.value.trim());
   storeSet('dsw_img_prompt', els.imgPrompt.value.trim());
@@ -1070,6 +1122,7 @@ els.length.addEventListener('change', () => {
 
   renderWords();
   loadPromptSettings();
+  loadModelSettings();
   updateCounts();
 })();
 
@@ -1181,77 +1234,3 @@ function textSimilarity(a, b) {
   return inter / (A.size + B.size - inter); // Jaccard
 }
 
-/* ================= 最小 .docx 生成器（纯 JS，STORE zip，无依赖） ================= */
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
-    t[n] = c;
-  }
-  return t;
-})();
-function crc32(bytes) {
-  let c = 0xFFFFFFFF;
-  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
-  return (c ^ 0xFFFFFFFF) >>> 0;
-}
-function utf8Bytes(s) { return new TextEncoder().encode(s); }
-function makeZipStore(files) {
-  let offset = 0;
-  const locals = [], centrals = [];
-  for (const f of files) {
-    const nb = utf8Bytes(f.name);
-    const crc = crc32(f.data);
-    const lh = new Uint8Array(30);
-    const dv = new DataView(lh.buffer);
-    dv.setUint32(0, 0x04034b50, true);
-    dv.setUint16(4, 20, true);
-    dv.setUint16(6, 0x0800, true);
-    dv.setUint16(8, 0, true);
-    dv.setUint32(14, crc, true);
-    dv.setUint32(18, f.data.length, true);
-    dv.setUint32(22, f.data.length, true);
-    dv.setUint16(26, nb.length, true);
-    const ch = new Uint8Array(46);
-    const cd = new DataView(ch.buffer);
-    cd.setUint32(0, 0x02014b50, true);
-    cd.setUint16(4, 20, true);
-    cd.setUint16(6, 20, true);
-    cd.setUint16(8, 0x0800, true);
-    cd.setUint32(12, offset, true);
-    cd.setUint32(16, crc, true);
-    cd.setUint32(20, f.data.length, true);
-    cd.setUint32(24, f.data.length, true);
-    cd.setUint16(28, nb.length, true);
-    cd.setUint32(42, offset, true);
-    locals.push(lh, nb, f.data);
-    centrals.push(ch, nb);
-    offset += 30 + nb.length + f.data.length;
-  }
-  const cdStart = offset;
-  let cdLen = 0;
-  for (const c of centrals) cdLen += c.length;
-  const eocd = new Uint8Array(22);
-  const eo = new DataView(eocd.buffer);
-  eo.setUint32(0, 0x06054b50, true);
-  eo.setUint16(8, files.length, true);
-  eo.setUint16(10, files.length, true);
-  eo.setUint32(12, cdLen, true);
-  eo.setUint32(16, cdStart, true);
-  const total = cdStart + cdLen + 22;
-  const out = new Uint8Array(total);
-  let p = 0;
-  for (const part of locals) { out.set(part, p); p += part.length; }
-  for (const part of centrals) { out.set(part, p); p += part.length; }
-  out.set(eocd, p);
-  return out;
-}
-function escXml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-function imageParagraphXml(rid, cx, cy, id) {
-  return '<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">'
-    + '<wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:docPr id="' + id + '" name="Picture ' + id + '"/>'
-    + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
