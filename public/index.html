@@ -118,7 +118,7 @@
         </div>
       </div>
 
-      <div class="rule-grid">
+      <div class="rule-grid hidden">
         <label class="field">
           <span>语气风格</span>
           <select id="style">
@@ -159,7 +159,7 @@
         <label><input type="checkbox" id="optFact" checked> 保留事实数据，不编造内容</label>
       </div>
 
-      <label class="field custom-req-field">
+      <label class="field custom-req-field hidden">
         <span>✍️ 自定义修改要求（选填）</span>
         <textarea id="customReq" rows="2" placeholder="例如：删除第一段；结尾加上行动呼吁；突出环保主题；把全文改写为第三人称…"></textarea>
       </label>
@@ -200,11 +200,21 @@
       </details>
     </section>
 
-    <!-- ============ 提示词设置（本地存储，不受 APK 版本更新影响） ============ -->
+    <!-- ============ 提示词设置（多组 · 本地存储，不受 APK 版本更新影响） ============ -->
     <section class="card prompt-card">
       <details>
-        <summary>⚙ 提示词设置（存本地 · 升级不丢 · 留空=用默认）</summary>
+        <summary>⚙ 提示词设置（多组管理 · 存本地 · 升级不丢）</summary>
         <div class="prompt-body">
+          <div class="prompt-group-row">
+            <label class="field inline-field" style="flex:1;min-width:180px;">
+              <span>当前提示词组</span>
+              <select id="promptGroupSel"></select>
+            </label>
+            <div class="prompt-actions" style="align-self:flex-end;">
+              <button id="newGroupBtn" class="btn sm" type="button">➕ 新建组</button>
+              <button id="delGroupBtn" class="btn ghost sm" type="button">🗑 删除当前组</button>
+            </div>
+          </div>
           <label class="field">
             <span>系统提示词（角色设定）</span>
             <textarea id="sysPrompt" rows="4" placeholder="留空使用内置默认提示词…"></textarea>
@@ -218,9 +228,9 @@
             <textarea id="dedupPrompt" rows="3" placeholder="留空使用默认降重提示词…"></textarea>
           </label>
           <div class="prompt-actions">
-            <button id="savePromptsBtn" class="btn primary sm" type="button">💾 保存提示词</button>
+            <button id="savePromptsBtn" class="btn primary sm" type="button">💾 保存当前组</button>
             <button id="resetPromptsBtn" class="btn ghost sm" type="button">恢复默认</button>
-            <span class="prompt-hint">保存后写入本地存储（Android：应用私有区 SharedPreferences；网页：localStorage）</span>
+            <span class="prompt-hint">切换组自动加载；修改后点「保存当前组」。所有组存本地（APK 升级不丢失）。</span>
           </div>
         </div>
       </details>

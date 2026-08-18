@@ -27,6 +27,7 @@ const els = {
   linkArticle: $('linkArticle'), linkTitle: $('linkTitle'), linkSourceTag: $('linkSourceTag'),
   sysPrompt: $('sysPrompt'), imgPrompt: $('imgPrompt'), dedupPrompt: $('dedupPrompt'),
   savePromptsBtn: $('savePromptsBtn'), resetPromptsBtn: $('resetPromptsBtn'),
+  promptGroupSel: $('promptGroupSel'), newGroupBtn: $('newGroupBtn'), delGroupBtn: $('delGroupBtn'),
   useTextBtn: $('useTextBtn'),
   imgPanel: $('imgPanel'), imgGrid: $('imgGrid'),
   wmPos: $('wmPos'), wmRatio: $('wmRatio'), wmRatioVal: $('wmRatioVal'),
@@ -518,17 +519,40 @@ const DEFAULT_SYSTEM_PROMPT =
   '4. 输出应是一篇连贯、完整、可直接发布的文章。';
 const DEFAULT_IMG_PROMPT = '若原文中包含 [图片] 标记，请在改写后的对应位置原样保留这些 [图片] 标记（每个标记单独占一行），以便后续把原图嵌入文档。';
 const DEFAULT_DEDUP_PROMPT = '【降重要求】上一版与原文相似度 {sim}% 偏高（目标 ≤5%）。请进行更大程度的改写：调整句式结构、更换同义表达、重组段落顺序、增删过渡内容，但不得改变事实与数据，也不得编造。';
+/* ---- 多组提示词（本地存储；旧版单组数据自动迁移为第一组） ---- */
+const PROMPT_GROUPS_KEY = 'dsw_prompt_groups';
+const PROMPT_ACTIVE_KEY = 'dsw_prompt_active';
+function getPromptGroups() {
+  try {
+    const arr = JSON.parse(storeGet(PROMPT_GROUPS_KEY) || 'null');
+    if (Array.isArray(arr) && arr.length) return arr;
+  } catch { /* ignore */ }
+  const legacy = {
+    id: 'default', name: '默认组',
+    sys: storeGet('dsw_sys_prompt') || '',
+    img: storeGet('dsw_img_prompt') || '',
+    dedup: storeGet('dsw_dedup_prompt') || '',
+  };
+  const groups = [legacy];
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+  return groups;
+}
+function getActiveGroup() {
+  const groups = getPromptGroups();
+  const activeId = storeGet(PROMPT_ACTIVE_KEY);
+  return groups.find((g) => g.id === activeId) || groups[0];
+}
 function getSysPrompt() {
-  const v = storeGet('dsw_sys_prompt');
-  return v && v.trim() ? v.trim() : DEFAULT_SYSTEM_PROMPT;
+  const g = getActiveGroup();
+  return g && g.sys && String(g.sys).trim() ? String(g.sys).trim() : DEFAULT_SYSTEM_PROMPT;
 }
 function getImgPrompt() {
-  const v = storeGet('dsw_img_prompt');
-  return v && v.trim() ? v.trim() : DEFAULT_IMG_PROMPT;
+  const g = getActiveGroup();
+  return g && g.img && String(g.img).trim() ? String(g.img).trim() : DEFAULT_IMG_PROMPT;
 }
 function getDedupPrompt() {
-  const v = storeGet('dsw_dedup_prompt');
-  return v && v.trim() ? v.trim() : DEFAULT_DEDUP_PROMPT;
+  const g = getActiveGroup();
+  return g && g.dedup && String(g.dedup).trim() ? String(g.dedup).trim() : DEFAULT_DEDUP_PROMPT;
 }
 
 /* ================= 规则 → Prompt ================= */
@@ -1002,14 +1026,28 @@ els.toggleKey.addEventListener('click', () => {
   els.apiKey.type = els.apiKey.type === 'password' ? 'text' : 'password';
 });
 /* ---- 提示词设置（本地存储，升级不丢） ---- */
-function loadPromptSettings() {
-  const sys = storeGet('dsw_sys_prompt');
-  const img = storeGet('dsw_img_prompt');
-  const dedup = storeGet('dsw_dedup_prompt');
-  els.sysPrompt.value = sys || '';
-  els.imgPrompt.value = img || '';
-  els.dedupPrompt.value = dedup || '';
+function fillPromptGroup(g) {
+  els.sysPrompt.value = (g && g.sys) || '';
+  els.imgPrompt.value = (g && g.img) || '';
+  els.dedupPrompt.value = (g && g.dedup) || '';
 }
+function loadPromptSettings() {
+  const groups = getPromptGroups();
+  const active = getActiveGroup();
+  els.promptGroupSel.innerHTML = '';
+  groups.forEach((g, i) => {
+    const o = document.createElement('option');
+    o.value = g.id;
+    o.textContent = (i + 1) + '. ' + (g.name || '提示词组');
+    els.promptGroupSel.appendChild(o);
+  });
+  els.promptGroupSel.value = active.id;
+  fillPromptGroup(active);
+}
+els.promptGroupSel.addEventListener('change', () => {
+  storeSet(PROMPT_ACTIVE_KEY, els.promptGroupSel.value);
+  fillPromptGroup(getActiveGroup());
+});
 /* ---- 模型与接口设置（本地存储） ---- */
 function loadModelSettings() {
   const t = storeGet('dsw_thinking');
@@ -1046,19 +1084,45 @@ els.resetModelBtn.addEventListener('click', () => {
 });
 
 els.savePromptsBtn.addEventListener('click', () => {
-  storeSet('dsw_sys_prompt', els.sysPrompt.value.trim());
-  storeSet('dsw_img_prompt', els.imgPrompt.value.trim());
-  storeSet('dsw_dedup_prompt', els.dedupPrompt.value.trim());
-  flash('提示词已保存到本地（升级 APK 不会丢失）');
+  const groups = getPromptGroups();
+  const g = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
+  g.sys = els.sysPrompt.value.trim();
+  g.img = els.imgPrompt.value.trim();
+  g.dedup = els.dedupPrompt.value.trim();
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+  flash('当前提示词组已保存到本地（升级 APK 不会丢失）');
+});
+els.newGroupBtn.addEventListener('click', () => {
+  const groups = getPromptGroups();
+  const ng = { id: 'g' + Date.now(), name: '提示词组' + (groups.length + 1), sys: '', img: '', dedup: '' };
+  groups.push(ng);
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+  storeSet(PROMPT_ACTIVE_KEY, ng.id);
+  loadPromptSettings();
+  flash('已新建提示词组：' + ng.name);
+});
+els.delGroupBtn.addEventListener('click', () => {
+  const groups = getPromptGroups();
+  if (groups.length <= 1) { flash('至少保留一组提示词', true); return; }
+  const id = els.promptGroupSel.value;
+  const idx = groups.findIndex((x) => x.id === id);
+  if (idx >= 0) {
+    groups.splice(idx, 1);
+    storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+    storeSet(PROMPT_ACTIVE_KEY, groups[0].id);
+    loadPromptSettings();
+    flash('已删除当前提示词组');
+  }
 });
 els.resetPromptsBtn.addEventListener('click', () => {
-  storeRemove('dsw_sys_prompt');
-  storeRemove('dsw_img_prompt');
-  storeRemove('dsw_dedup_prompt');
+  const groups = getPromptGroups();
+  const g = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
+  g.sys = ''; g.img = ''; g.dedup = '';
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
   els.sysPrompt.value = '';
   els.imgPrompt.value = '';
   els.dedupPrompt.value = '';
-  flash('已恢复默认提示词');
+  flash('当前组已恢复默认提示词');
 });
 
 /* 链接输入框一键清除（清空链接与抓取结果） */

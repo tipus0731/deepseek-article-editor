@@ -218,12 +218,15 @@
       btn.textContent = '导出中…';
       try {
         // 始终用“当前状态”重建 Word：已裁切用裁切图，未裁切自动裁切，保证图片最新且必进文档
-        const text = outputText || '';
+        let text = outputText || '';
         if (!text.trim()) throw new Error('当前没有可导出的内容，请先点击「开始修改」或「智能改写」生成文章');
+        const cut = cutFactCheck(text); // 剔除「事实核查表」及之后内容
+        if (cut.length < text.length) logAuto('✂ 已剔除「事实核查表」及其后的内容');
+        text = cut;
         const pngImages = await preparePngImages(articleImages || []);
         const blocks = blocksWithImages(lastOriginal, text, pngImages);
         const buffer = buildDocx('生成文章', blocks);
-        const name = lastDocx ? lastDocx.name : '生成文章.docx';
+        const name = docxNameFromText(text, '生成文章');
         await downloadDocx(buffer, name);
         logAuto('💾 已保存：' + name);
       } catch (e) {
@@ -293,7 +296,7 @@
 
         const sim = textSimilarity(original, outputText);
         finalSim = sim;
-        finalText = outputText;
+        finalText = cutFactCheck(outputText); // 剔除「事实核查表」及之后内容（预览/导出用）
         const pct = (sim * 100).toFixed(1);
         updateSimDisplay(attempt, parseFloat(pct));
         logAuto('本次重复度：' + pct + '% （目标 ≤5%，重试线 ≥8%）');
@@ -312,7 +315,7 @@
       const blocks = blocksWithImages(original, finalText, pngImages);
       renderPreview(blocks);
       const docxBuf = buildDocx('生成文章', blocks);
-      const name = '生成文章-重复度' + (finalSim * 100).toFixed(1) + '%-尝试' + attemptsUsed + '次.docx';
+      const name = docxNameFromText(finalText, '生成文章');
       lastDocx = { buffer: docxBuf, name: name };
       updateSaveHint();
       logAuto('📄 预览已生成：' + blocks.length + ' 个内容块（含图片 ' + pngImages.length + ' 张）。点击「💾 导出 Word 文档」保存。');
@@ -337,6 +340,24 @@
     }
     return urls;
   }
+  /* 导出文件名：取文章内容（去空白）前 10 个字 */
+  function docxNameFromText(text, fallback) {
+    const t = String(text || '').replace(/\s+/g, '');
+    let n = t.slice(0, 10);
+    if (!n) n = fallback || '生成文章';
+    n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
+    if (!n) n = '生成文章';
+    return n + '.docx';
+  }
+
+  /* 剔除「事实核查表」及其之后的所有内容（导出预览与 Word 共用） */
+  function cutFactCheck(text) {
+    const t = String(text || '');
+    const i = t.indexOf('事实核查表');
+    if (i < 0) return t;
+    return t.slice(0, i).replace(/\s+$/, '');
+  }
+
   function safeDocxName(title, index) {
     let n = String(title || '').trim().replace(/[\\/:*?"<>|\s]+/g, '_');
     n = n.replace(/[\u0000-\u001f]/g, '');
@@ -386,12 +407,15 @@
         const messages = buildSmartMessages(articleText, null);
         outputText = '';
         await streamRewrite({ apiKey, model, messages }, new AbortController().signal);
-        const out = String(outputText || '').trim();
+        let out = String(outputText || '').trim();
         if (!out) throw new Error('AI 未返回内容');
+        const cut = cutFactCheck(out); // 剔除「事实核查表」及之后内容
+        if (cut.length < out.length) logAuto('✂ 已剔除「事实核查表」及其后的内容');
+        out = cut;
 
         // 生成并保存 Word（图片按文章中的 [图片] 位置嵌入）
         const blocks = blocksWithImages(articleText, out, pngImages);
-        const docxName = safeDocxName(data.title, i);
+        const docxName = docxNameFromText(out, data.title || ('文章' + (i + 1)));
         const docxBuf = buildDocx(data.title || '生成文章', blocks);
         logAuto('📄 保存 Word：' + docxName + '（' + pngImages.length + ' 张图片）…');
         await downloadDocx(docxBuf, docxName);
