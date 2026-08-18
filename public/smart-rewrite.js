@@ -118,9 +118,16 @@
     const wmRatio = (opts && opts.wmRatio) != null
       ? opts.wmRatio
       : Number(document.getElementById('wmRatio').value) / 100;
+    const autoCrop = (typeof autoCropEnabled === 'function') ? autoCropEnabled() : true;
     for (let i = 0; i < list.length; i++) {
       try {
-        const png = await pngFromItem(list[i], wmPos, wmRatio);
+        let png;
+        if (autoCrop) {
+          // 已裁切（blobUrl）优先，否则自动裁切去水印，失败回退原图
+          png = await pngFromItem(list[i], wmPos, wmRatio);
+        } else {
+          png = await loadImgForDocx(list[i].blobUrl || list[i].url);
+        }
         out.push({ type: 'img', data: png.data, w: png.w, h: png.h });
       } catch (e) {
         if (opts && opts.log) opts.log('⚠ 第 ' + (i + 1) + ' 张图片跳过：' + e.message);
@@ -262,7 +269,7 @@
       logAuto('正在准备 ' + imgItems.length + ' 张图片（裁切去水印 + 转换 Word 格式）…');
       pngImages = await preparePngImages(imgItems, { log: logAuto });
       const failed = imgItems.length - pngImages.length;
-      logAuto('图片就绪：' + pngImages.length + '/' + imgItems.length + ' 张' + (failed ? '（跳过 ' + failed + ' 张）' : ''));
+      logAuto('图片就绪：' + pngImages.length + '/' + imgItems.length + ' 张' + (failed ? '（跳过 ' + failed + ' 张）' : '') + ((typeof autoCropEnabled === 'function' && autoCropEnabled()) ? '（已自动去水印）' : ''));
     }
 
     const apiKey = document.getElementById('apiKey').value.trim();

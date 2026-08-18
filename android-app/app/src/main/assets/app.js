@@ -31,6 +31,7 @@ const els = {
   useTextBtn: $('useTextBtn'),
   imgPanel: $('imgPanel'), imgGrid: $('imgGrid'),
   wmPos: $('wmPos'), wmRatio: $('wmRatio'), wmRatioVal: $('wmRatioVal'),
+  autoCropChk: $('autoCropChk'),
   cropAllBtn: $('cropAllBtn'), downloadAllBtn: $('downloadAllBtn'),
 };
 
@@ -1230,4 +1231,3 @@ function fetchOne(url) {
       }
       (async () => {
         let data;
-        if (DIRECT) {

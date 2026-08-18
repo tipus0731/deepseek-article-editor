@@ -31,6 +31,7 @@ const els = {
   useTextBtn: $('useTextBtn'),
   imgPanel: $('imgPanel'), imgGrid: $('imgGrid'),
   wmPos: $('wmPos'), wmRatio: $('wmRatio'), wmRatioVal: $('wmRatioVal'),
+  autoCropChk: $('autoCropChk'),
   cropAllBtn: $('cropAllBtn'), downloadAllBtn: $('downloadAllBtn'),
 };
 
@@ -1616,6 +1617,18 @@ function downloadAll() {
 els.wmRatio.addEventListener('input', () => {
   els.wmRatioVal.textContent = els.wmRatio.value + '%';
 });
+/* 自动去水印开关（默认开启，存本地） */
+function autoCropEnabled() {
+  return !els.autoCropChk || els.autoCropChk.checked;
+}
+els.autoCropChk.addEventListener('change', () => {
+  storeSet('dsw_autocrop', els.autoCropChk.checked ? '1' : '0');
+  flash(els.autoCropChk.checked ? '自动去水印已开启' : '自动去水印已关闭');
+});
+{
+  const v = storeGet('dsw_autocrop');
+  els.autoCropChk.checked = v === null ? true : v === '1';
+}
 els.cropAllBtn.addEventListener('click', processAll);
 els.downloadAllBtn.addEventListener('click', downloadAll);
 els.useTextBtn.addEventListener('click', () => {
