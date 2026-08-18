@@ -26,6 +26,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLDecoder;
 import java.util.LinkedHashSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -226,6 +227,31 @@ public class MainActivity extends Activity {
             String host = url.getHost() == null ? "" : url.getHost();
             boolean isToutiao = host.endsWith("toutiao.com") || host.equals("toutiao.com");
 
+            // 头条电脑端网页常被“JS 反爬挑战”拦截（_$jsvmprt 脚本），
+            // 优先走移动端 info 接口 / RENDER_DATA：标题 + 正文 + 图片一次拿到
+            if (isToutiao) {
+                String ttId = extractToutiaoId(urlStr);
+                if (ttId != null) {
+                    try {
+                        String infoJson = httpGet("https://m.toutiao.com/i" + ttId + "/info/", true);
+                        JSONObject root = new JSONObject(infoJson);
+                        if (root.has("data")) {
+                            JSONObject d = root.getJSONObject("data");
+                            String content = d.optString("content", "");
+                            if (!content.trim().isEmpty()
+                                    && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
+                                return extractToutiaoHtmlContent(content, d.optString("title", "")).toString();
+                            }
+                        }
+                    } catch (Exception ignored) { /* 尝试下一个通道 */ }
+                    try {
+                        String pageHtml = httpGet("https://m.toutiao.com/i" + ttId + "/", true);
+                        JSONObject rd = extractToutiaoRenderData(pageHtml);
+                        if (rd != null) return rd.toString();
+                    } catch (Exception ignored) { /* 回退桌面页 */ }
+                }
+            }
+
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(15000);
@@ -257,6 +283,112 @@ public class MainActivity extends Activity {
             String charset = detectCharset(conn.getContentType(), bytes);
             String html = new String(bytes, charset);
             return parseArticle(html, isToutiao);
+        }
+
+        /** 独立 GET 抓取（带超时/UA/Referer），返回文本 */
+        private String httpGet(String urlStr, boolean mobile) throws Exception {
+            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(20000);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", mobile
+                    ? "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+                    : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
+            conn.setRequestProperty("Accept", mobile
+                    ? "application/json;q=0.9,text/html;q=0.8"
+                    : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+            conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+            conn.setRequestProperty("Accept-Encoding", "gzip");
+            if (mobile) conn.setRequestProperty("Referer", "https://m.toutiao.com/");
+
+            int code = conn.getResponseCode();
+            if (code != 200) throw new Exception("HTTP " + code);
+            InputStream in = conn.getInputStream();
+            String enc = conn.getContentEncoding();
+            if ("gzip".equalsIgnoreCase(enc)) in = new GZIPInputStream(in);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            in.close();
+            conn.disconnect();
+            byte[] bytes = out.toByteArray();
+            if (bytes.length > 8 * 1024 * 1024) throw new Exception("页面过大");
+            String charset = detectCharset(conn.getContentType(), bytes);
+            return new String(bytes, charset);
+        }
+
+        /** 从头条链接中提取文章 id（/article/123... 或 /i123...） */
+        private String extractToutiaoId(String url) {
+            Matcher m = Pattern.compile("/article/(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
+            if (m.find()) return m.group(1);
+            m = Pattern.compile("/i(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
+            return m.find() ? m.group(1) : null;
+        }
+
+        /** 把头条正文 HTML（<p> 与 pgc-img 图片块）转成 {title, text, images} */
+        private JSONObject extractToutiaoHtmlContent(String contentHtml, String title) throws Exception {
+            LinkedHashSet<String> images = new LinkedHashSet<>();
+            // 图片 -> [图片] 占位（仅保留下一步会收录的图）
+            Matcher im0 = Pattern.compile("<img[^>]*>", Pattern.CASE_INSENSITIVE).matcher(contentHtml);
+            StringBuffer sb = new StringBuffer();
+            while (im0.find()) {
+                String rep = pickImageUrl(im0.group()) != null ? " [图片] " : "";
+                im0.appendReplacement(sb, Matcher.quoteReplacement(rep));
+            }
+            im0.appendTail(sb);
+            String seg = sb.toString()
+                    .replaceAll("(?i)<br[^>]*>", "\n")
+                    .replaceAll("(?i)</?(p|div|h[1-6]|li|tr|blockquote|section|article|pre)[^>]*>", "\n")
+                    .replaceAll("<[^>]+>", " ")
+                    .replaceAll("&nbsp;", " ")
+                    .replaceAll("\\s+", " ")
+                    .trim();
+            StringBuilder text = new StringBuilder();
+            for (String line : seg.split("\n")) {
+                String l = line.trim();
+                if (!l.isEmpty()) {
+                    if (text.length() > 0) text.append('\n');
+                    text.append(l);
+                }
+            }
+            Matcher im = Pattern.compile("<img[^>]*>", Pattern.CASE_INSENSITIVE).matcher(contentHtml);
+            while (im.find()) {
+                String u = pickImageUrl(im.group());
+                if (u != null) images.add(u);
+            }
+            JSONArray imgArr = new JSONArray();
+            int cnt = 0;
+            for (String u : images) {
+                if (cnt++ >= 30) break;
+                imgArr.put(u);
+            }
+            JSONObject obj = new JSONObject();
+            String t = title == null ? "" : title.trim();
+            obj.put("title", t.length() > 120 ? t.substring(0, 120) : t);
+            obj.put("text", text.length() > 30000 ? text.substring(0, 30000) : text.toString());
+            obj.put("images", imgArr);
+            obj.put("source", "toutiao");
+            obj.put("via", "native");
+            return obj;
+        }
+
+        /** 解析移动端页面的 RENDER_DATA（URL-encoded JSON） */
+        private JSONObject extractToutiaoRenderData(String html) throws Exception {
+            Matcher m = Pattern.compile(
+                    "<script id=\"RENDER_DATA\" type=\"application/json\">([\\s\\S]*?)</script>",
+                    Pattern.CASE_INSENSITIVE).matcher(html);
+            if (!m.find()) return null;
+            String encoded = m.group(1);
+            // URLDecoder 会把 + 变空格，先把字面 + 还原成 %2B 再解码
+            String decoded = URLDecoder.decode(encoded.replace("+", "%2B"), "UTF-8");
+            JSONObject root = new JSONObject(decoded);
+            JSONObject info = root.has("articleInfo") ? root.getJSONObject("articleInfo") : null;
+            if (info == null) return null;
+            String content = info.optString("content", "");
+            if (content.trim().isEmpty() || content.replaceAll("<[^>]+>", "").trim().isEmpty()) return null;
+            return extractToutiaoHtmlContent(content, info.optString("title", ""));
         }
 
         private String detectCharset(String contentType, byte[] bytes) {

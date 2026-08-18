@@ -279,8 +279,88 @@ function pickImageUrlJs(tag) {
   for (const b of bad) if (u.includes(b)) return null;
   return url.trim();
 }
+/* ================= 今日头条：info 接口 / 移动端 RENDER_DATA 备用解析（桌面页常被 JS 反爬挑战拦截） ================= */
+function toutiaoArticleId(url) {
+  let m = /\/article\/(\d{6,})/i.exec(String(url));
+  if (m) return m[1];
+  m = /\/i(\d{6,})/i.exec(String(url));
+  return m ? m[1] : null;
+}
+function toutiaoHtmlToResult(contentHtml, title) {
+  const paragraphs = [];
+  const images = [];
+  let seg = String(contentHtml).replace(/<img[^>]*>/gi, (tag) => (pickImageUrlJs(tag) ? ' [图片] ' : ''));
+  seg = seg
+    .replace(/<br[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  for (const line of seg.split('\n')) {
+    const l = line.trim();
+    if (l) paragraphs.push(l);
+  }
+  String(contentHtml).replace(/<img[^>]*>/gi, (tag) => {
+    const u = pickImageUrlJs(tag);
+    if (u) images.push(u);
+    return '';
+  });
+  return { title: String(title || '').slice(0, 120), text: paragraphs.join('\n'), images: [...new Set(images)].slice(0, 30) };
+}
+function extractToutiaoRenderDataJs(html) {
+  const m = /<script id="RENDER_DATA" type="application\/json">([\s\S]*?)<\/script>/i.exec(String(html));
+  if (!m) return null;
+  let obj = null;
+  try { obj = JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
+  const info = (obj && obj.articleInfo) || null;
+  if (!info) return null;
+  let content = '';
+  try { content = String(info.content || ''); } catch { /* ignore */ }
+  if (!content || !content.replace(/<[^>]+>/g, '').trim()) return null;
+  let title = '';
+  try { title = String(info.title || ''); } catch { /* ignore */ }
+  const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  if (!title && t) title = decodeEntities(t[1].trim());
+  return { content, title };
+}
+
 async function directFetchArticle(url) {
   if (isExpired()) throw new Error('软件已到期，功能已停止使用');
+  // 头条优先走 info 接口 / 移动端 RENDER_DATA（公共代理也能抓到）
+  let ttHost = false;
+  let ttId = null;
+  try { ttHost = /(^|\.)toutiao\.com$/i.test(new URL(url).hostname); } catch { /* ignore */ }
+  if (ttHost) ttId = toutiaoArticleId(url);
+  if (ttId) {
+    for (const via of [
+      { kind: 'info', target: 'https://m.toutiao.com/i' + ttId + '/info/' },
+      { kind: 'render', target: 'https://m.toutiao.com/i' + ttId + '/' },
+    ]) {
+      for (const p of PROXIES) {
+        try {
+          const res = await fetch(p.build(via.target), { signal: AbortSignal.timeout(25000) });
+          if (!res.ok) continue;
+          const buf = new Uint8Array(await res.arrayBuffer());
+          if (via.kind === 'info') {
+            const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
+            const content = j && j.data && String(j.data.content || '');
+            if (content && content.replace(/<[^>]+>/g, '').trim()) {
+              const r2 = toutiaoHtmlToResult(content, j.data.title);
+              if (r2.text || r2.images.length) return { title: r2.title, text: r2.text, images: r2.images, url, via: p.name, source: 'toutiao' };
+            }
+          } else {
+            const html = new TextDecoder('utf-8').decode(buf);
+            const rd = extractToutiaoRenderDataJs(html);
+            if (rd) {
+              const r2 = toutiaoHtmlToResult(rd.content, rd.title);
+              if (r2.text || r2.images.length) return { title: r2.title, text: r2.text, images: r2.images, url, via: p.name, source: 'toutiao' };
+            }
+          }
+        } catch { /* 下一个代理 */ }
+      }
+    }
+  }
   let lastErr = null;
   for (const p of PROXIES) {
     try {
@@ -950,7 +1030,7 @@ function fillArticle(data) {
     els.imgGrid.innerHTML = '';
   }
   updateCounts();
-  const viaTxt = !data.via ? '' : (data.via === 'native' ? '（原生抓取）' : '（经 ' + data.via + ' 代理）');
+  const viaTxt = !data.via ? '' : (data.via === 'native' ? '（原生抓取）' : (data.via === 'toutiao' ? '（头条接口）' : '（经 ' + data.via + ' 代理）'));
   flash('抓取成功' + (data.title ? '：《' + data.title + '》' : '') + (imgs.length ? '，含 ' + imgs.length + ' 张图片' : '') + viaTxt);
 }
 
@@ -1153,86 +1233,3 @@ function loadImageForCanvas(url) {
     img.src = url;
   });
 }
-async function loadImageWithFallback(url) {
-  try {
-    return await loadImageForCanvas(url);
-  } catch {
-    for (const p of PROXIES) {
-      try { return await loadImageForCanvas(p.build(url)); } catch { /* 下一个代理 */ }
-    }
-    throw new Error('图片加载失败（直连与公共代理均失败，可能防盗链）');
-  }
-}
-function cropRect(w, h, pos, ratio) {
-  const r = Math.min(0.5, Math.max(0.02, ratio));
-  const sw = Math.round(w * r), sh = Math.round(h * r);
-  switch (pos) {
-    case 'bottom-left': return { cw: w - sw, ch: h - sh, sx: sw, sy: 0 };
-    case 'top-right': return { cw: w - sw, ch: h - sh, sx: 0, sy: sh };
-    case 'top-left': return { cw: w - sw, ch: h - sh, sx: sw, sy: sh };
-    case 'bottom': return { cw: w, ch: h - sh, sx: 0, sy: 0 };
-    case 'bottom-right':
-    default: return { cw: w - sw, ch: h - sh, sx: 0, sy: 0 };
-  }
-}
-async function cropImageToBlob(url, pos, ratio) {
-  const img = await loadImageWithFallback(url);
-  const w = img.naturalWidth, h = img.naturalHeight;
-  if (!w || !h) throw new Error('图片尺寸无效');
-  const { cw, ch, sx, sy } = cropRect(w, h, pos, ratio);
-  const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
-  let blob = null;
-  try {
-    blob = await new Promise((res) => canvas.toBlob(res, 'image/webp', 0.92));
-    if (!blob) blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
-  } catch (e) {
-    throw new Error('canvas 导出被浏览器拦截（跨域保护）：' + e.message);
-  }
-  if (!blob) throw new Error('图片导出失败');
-  return blob;
-}
-
-function statusLabel(s) {
-  return s === 'done' ? '✓ 已去水印' : s === 'fail' ? '✗ 失败' : '原图';
-}
-function setImgSrcWithFallback(img, url) {
-  let tries = 0;
-  img.onerror = () => {
-    tries++;
-    if (tries <= PROXIES.length) img.src = PROXIES[tries - 1].build(url);
-    else { img.alt = '图片加载失败'; img.style.opacity = 0.3; }
-  };
-  img.src = url;
-}
-function renderImgGrid() {
-  els.imgGrid.innerHTML = '';
-  if (!articleImages.length) return;
-  articleImages.forEach((item, i) => {
-    const card = document.createElement('div');
-    card.className = 'img-card';
-    const wrap = document.createElement('div');
-    wrap.className = 'img-wrap';
-    const img = document.createElement('img');
-    img.alt = '图片' + (i + 1);
-    img.loading = 'lazy';
-    setImgSrcWithFallback(img, item.blobUrl || item.url);
-    wrap.appendChild(img);
-    const info = document.createElement('div');
-    info.className = 'img-info';
-    info.innerHTML = '<span class="tag ' + (item.status === 'done' ? 'ok' : item.status === 'fail' ? 'err' : '') + '">' + statusLabel(item.status) + '</span><span>' + (i + 1) + '/' + articleImages.length + '</span>';
-    const acts = document.createElement('div');
-    acts.className = 'img-actions';
-    const bCrop = document.createElement('button');
-    bCrop.className = 'btn sm'; bCrop.type = 'button'; bCrop.textContent = '✂ 去水印';
-    bCrop.onclick = () => processOne(i);
-    const bDl = document.createElement('button');
-    bDl.className = 'btn sm'; bDl.type = 'button'; bDl.textContent = '下载';
-    bDl.onclick = () => downloadOne(i);
-    const bView = document.createElement('button');
-    bView.className = 'btn ghost sm'; bView.type = 'button'; bView.textContent = '原图';
-    bView.onclick = () => window.open(item.url, '_blank');
-    acts.appendChild(bCrop); acts.appendChild(bDl); acts.appendChild(bView);

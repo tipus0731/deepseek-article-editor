@@ -160,6 +160,58 @@ function extractToutiao(html) {
   };
 }
 
+/* ---------------- 今日头条：info 接口 / 移动端 RENDER_DATA（桌面页被反爬 JS 挑战拦截时的备用通道） ---------------- */
+const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+
+function toutiaoArticleId(url) {
+  let m = /\/article\/(\d{6,})/i.exec(url || '');
+  if (m) return m[1];
+  m = /\/i(\d{6,})/i.exec(url || '');
+  return m ? m[1] : null;
+}
+function toutiaoHtmlToResult(contentHtml, title) {
+  const paragraphs = [];
+  const images = [];
+  let seg = String(contentHtml).replace(/<img[^>]*>/gi, (tag) => (pickArticleImage(tag) ? ' [图片] ' : ''));
+  seg = seg
+    .replace(/<br[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  for (const line of seg.split('\n')) {
+    const l = line.trim();
+    if (l) paragraphs.push(l);
+  }
+  String(contentHtml).replace(/<img[^>]*>/gi, (tag) => {
+    const u = pickArticleImage(tag);
+    if (u) images.push(u);
+    return '';
+  });
+  return {
+    title: String(title || '').slice(0, 120),
+    text: paragraphs.join('\n').slice(0, MAX_ARTICLE_CHARS),
+    images: [...new Set(images)].slice(0, 30),
+  };
+}
+function extractToutiaoRenderData(html) {
+  const m = /<script id="RENDER_DATA" type="application\/json">([\s\S]*?)<\/script>/i.exec(html || '');
+  if (!m) return null;
+  let obj = null;
+  try { obj = JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
+  const info = (obj && obj.articleInfo) || null;
+  if (!info) return null;
+  let content = '';
+  try { content = String(info.content || ''); } catch { /* ignore */ }
+  if (!content || !content.replace(/<[^>]+>/g, '').trim()) return null;
+  let title = '';
+  try { title = String(info.title || ''); } catch { /* ignore */ }
+  const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  if (!title && t) title = decodeEntities(t[1].trim());
+  return { content, title };
+}
+
 /* ---------------- API 路由 ---------------- */
 async function handleRewrite(req, res) {
   let body;
@@ -234,6 +286,54 @@ async function handleFetchArticle(req, res) {
   let hostname = '';
   try { hostname = new URL(url).hostname; } catch { /* ignore */ }
   const isToutiao = /(^|\.)toutiao\.com$/i.test(hostname);
+
+  // 头条电脑端网页常被“JS 反爬挑战”拦截（页面只有 _\$jsvmprt 脚本，无正文），
+  // 优先走移动端 info 接口 / RENDER_DATA，稳定拿到标题+正文+图片
+  if (isToutiao) {
+    const ttId = toutiaoArticleId(url);
+    if (ttId) {
+      const candidates = [
+        { kind: 'info', target: 'https://m.toutiao.com/i' + ttId + '/info/' },
+        { kind: 'render', target: 'https://m.toutiao.com/i' + ttId + '/' },
+      ];
+      for (const cand of candidates) {
+        try {
+          const cRes = await fetch(cand.target, {
+            headers: {
+              'User-Agent': MOBILE_UA,
+              Accept: cand.kind === 'info' ? 'application/json;q=0.9,text/html;q=0.8' : 'text/html;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'zh-CN,zh;q=0.9',
+              Referer: 'https://m.toutiao.com/',
+            },
+            redirect: 'follow',
+            signal: AbortSignal.timeout(20000),
+          });
+          if (!cRes.ok) continue;
+          const cBuf = Buffer.from(await cRes.arrayBuffer());
+          if (cBuf.length > MAX_PAGE_BYTES) continue;
+          if (cand.kind === 'info') {
+            const j = JSON.parse(cBuf.toString('utf-8'));
+            const content = j && j.data && String(j.data.content || '');
+            if (content && content.replace(/<[^>]+>/g, '').trim()) {
+              const rr = toutiaoHtmlToResult(content, j.data.title);
+              if (rr.text || rr.images.length) {
+                return sendJson(res, 200, { title: rr.title, text: rr.text, images: rr.images, url, source: 'toutiao', via: 'toutiao' });
+              }
+            }
+          } else {
+            const html = cBuf.toString('utf-8');
+            const rd = extractToutiaoRenderData(html);
+            if (rd) {
+              const rr = toutiaoHtmlToResult(rd.content, rd.title);
+              if (rr.text || rr.images.length) {
+                return sendJson(res, 200, { title: rr.title, text: rr.text, images: rr.images, url, source: 'toutiao', via: 'toutiao' });
+              }
+            }
+          }
+        } catch { /* 尝试下一个通道 */ }
+      }
+    }
+  }
 
   const headers = {
     'User-Agent':
