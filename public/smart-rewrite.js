@@ -166,10 +166,9 @@
     const original = getSourceText();
     if (!original) return;
 
-    // 重置相关区域
+    // 重置相关区域（保存按钮常驻显示，不隐藏）
     document.getElementById('simDisplay').classList.add('hidden');
     document.getElementById('previewArea').classList.add('hidden');
-    document.getElementById('saveWordRow').classList.add('hidden');
     const logEl = document.getElementById('autoLog');
     logEl.classList.remove('hidden');
     logEl.innerHTML = '';

@@ -36,6 +36,7 @@ jobs:
           cp public/index.html android-app/app/src/main/assets/
           cp public/style.css  android-app/app/src/main/assets/
           cp public/app.js     android-app/app/src/main/assets/
+          cp public/smart-rewrite.js android-app/app/src/main/assets/
 
       - name: Build APK
         working-directory: android-app
