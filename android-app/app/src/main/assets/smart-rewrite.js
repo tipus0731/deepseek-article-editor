@@ -20,27 +20,65 @@
     return [{ role: 'system', content: baseMsgs[0].content }, { role: 'user', content: user }];
   }
 
-  function splitBlocksForDocx(text, images) {
+    function splitTextBlocks(text) {
     const blocks = [];
-    // 同时识别半角/全角图片标记；带捕获组的 split：奇数为标记位，偶数为正文段
-    const parts = String(text).split(/(\[图片\]|【图片】)/g);
-    let imgIdx = 0;
-    const paragraphize = (t) => {
-      const raw = String(t).split(/\n+/).map((s) => s.trim()).filter(Boolean);
-      for (const p of raw) {
-        if (/^#{1,6}\s/.test(p)) blocks.push({ type: 'h', text: p.replace(/^#{1,6}\s*/, '') });
-        else blocks.push({ type: 'p', text: p });
+    const raw = String(text || '').replace(/(\[图片\]|【图片】)/g, ' ').split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    for (const p of raw) {
+      if (/^#{1,6}\s/.test(p)) blocks.push({ type: 'h', text: p.replace(/^#{1,6}\s*/, '') });
+      else blocks.push({ type: 'p', text: p });
+    }
+    return blocks;
+  }
+
+  /* 按“原文位置”对齐插入图片（替代原来只在改写文本 [图片] 标记处插图，标记一丢图就全跑末尾的问题）：
+   * 1) 记录每张图在原文中前面相邻的段落（锚点段落序号）；
+   * 2) 在改写文本中用相似度找到与锚点段落最对应的改写段落（找不到→按段落比例映射兜底）；
+   * 3) 图片插到对应改写段之后，保持图片原顺序。 */
+  function blocksWithImages(originalText, rewriteText, images) {
+    const imageList = images || [];
+    if (!imageList.length) return splitTextBlocks(rewriteText);
+    const origBlocks = splitTextBlocks(originalText || '');
+
+    // 锚点：每张图在原文中的“前一段落”序号
+    const anchors = [];
+    {
+      const parts = String(originalText || '').split(/(\[图片\]|【图片】)/g);
+      let paraBefore = 0;
+      for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 1) { anchors.push(Math.max(0, paraBefore - 1)); continue; }
+        paraBefore += parts[i].split(/\n+/).map((s) => s.trim()).filter(Boolean).length;
       }
-    };
-    parts.forEach((seg, i) => {
-      if (i % 2 === 1) {
-        if (imgIdx < images.length) blocks.push(images[imgIdx++]);
-        return;
+      if (!anchors.length) for (let i = 0; i < imageList.length; i++) anchors.push(0);
+    }
+
+    const rewBlocks = splitTextBlocks(rewriteText);
+    const inserts = imageList.map((img, i) => {
+      let oa = (anchors[i] != null && origBlocks.length) ? Math.min(anchors[i], origBlocks.length - 1) : -1;
+      let after = -1;
+      if (oa >= 0) {
+        const oaText = origBlocks[oa].text || '';
+        let best = -1, bestSim = 0.12;
+        for (let j = 0; j < rewBlocks.length; j++) {
+          const s = textSimilarity(oaText, rewBlocks[j].text);
+          if (s > bestSim) { bestSim = s; best = j; }
+        }
+        if (best >= 0) after = best;
       }
-      paragraphize(seg);
+      if (after < 0 && rewBlocks.length) {
+        const ratio = (oa >= 0 && origBlocks.length > 1)
+          ? oa / (origBlocks.length - 1)
+          : (imageList.length > 1 ? i / (imageList.length - 1) : 0);
+        after = Math.min(rewBlocks.length - 1, Math.max(0, Math.round(ratio * (rewBlocks.length - 1))));
+      }
+      return { after, img };
     });
-    // 全部图片必进 Word：正文未占位的追加到末尾
-    while (imgIdx < images.length) blocks.push(images[imgIdx++]);
+
+    const blocks = [];
+    rewBlocks.forEach((b, j) => {
+      blocks.push(b);
+      for (const ins of inserts) if (ins.after === j) blocks.push(ins.img);
+    });
+    for (const ins of inserts) if (ins.after < 0) blocks.push(ins.img);
     return blocks;
   }
 
@@ -183,7 +221,7 @@
         const text = outputText || '';
         if (!text.trim()) throw new Error('当前没有可导出的内容，请先点击「开始修改」或「智能改写」生成文章');
         const pngImages = await preparePngImages(articleImages || []);
-        const blocks = splitBlocksForDocx(text, pngImages);
+        const blocks = blocksWithImages(lastOriginal, text, pngImages);
         const buffer = buildDocx('生成文章', blocks);
         const name = lastDocx ? lastDocx.name : '生成文章.docx';
         await downloadDocx(buffer, name);
@@ -271,7 +309,7 @@
 
       // 生成预览 + 准备 Word（不自动下载，等用户点保存）
       setStatus('正在生成导出预览…', 'loading');
-      const blocks = splitBlocksForDocx(finalText, pngImages);
+      const blocks = blocksWithImages(original, finalText, pngImages);
       renderPreview(blocks);
       const docxBuf = buildDocx('生成文章', blocks);
       const name = '生成文章-重复度' + (finalSim * 100).toFixed(1) + '%-尝试' + attemptsUsed + '次.docx';
@@ -352,7 +390,7 @@
         if (!out) throw new Error('AI 未返回内容');
 
         // 生成并保存 Word（图片按文章中的 [图片] 位置嵌入）
-        const blocks = splitBlocksForDocx(out, pngImages);
+        const blocks = blocksWithImages(articleText, out, pngImages);
         const docxName = safeDocxName(data.title, i);
         const docxBuf = buildDocx(data.title || '生成文章', blocks);
         logAuto('📄 保存 Word：' + docxName + '（' + pngImages.length + ' 张图片）…');
