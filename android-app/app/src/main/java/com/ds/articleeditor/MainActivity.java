@@ -233,95 +233,84 @@ public class MainActivity extends Activity {
             if (isToutiao) {
                 String ttId = extractToutiaoId(urlStr);
                 if (ttId != null) {
-                    // 模拟浏览器先拿 tt_webid cookie，减少被 WAF 按“无 cookie 快速请求”拦截的几率
+                    // 模拟浏览器先拿 tt_webid cookie（拿不到也没关系，会试无 cookie 的请求）
                     String ttCookie = toutiaoWebIdCookie();
                     String cookieHdr = ttCookie == null ? null : ("tt_webid=" + ttCookie);
-                    // 每条通道失败时延迟 1.2s 重试一次（WAF 限流通常是暂时性的）
-                    String infoJson = null;
-                    for (int attempt = 0; attempt < 2 && infoJson == null; attempt++) {
-                        try {
-                            infoJson = httpGet("https://m.toutiao.com/i" + ttId + "/info/", true, cookieHdr);
-                        } catch (Exception e) {
-                            ttChannels += "（info接口失败:" + e.getMessage() + "）";
-                            if (attempt == 0) { try { Thread.sleep(1200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
-                        }
-                    }
-                    if (infoJson != null) {
-                        try {
-                            JSONObject root = new JSONObject(infoJson);
-                            if (root.has("data")) {
-                                JSONObject d = root.getJSONObject("data");
-                                String content = d.optString("content", "");
-                                String title = d.optString("title", "");
-                                JSONArray extraImgs = null;
-                                // 微头条（/w/ 链接）：正文在 thread.thread_base（纯文本），图片在 large_image_list
-                                if (content == null || content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
-                                    if (d.has("thread")) {
-                                        JSONObject tb = d.getJSONObject("thread").optJSONObject("thread_base");
-                                        if (tb != null) {
-                                            String c2 = tb.optString("content", "");
-                                            if (c2 == null || c2.trim().isEmpty()) c2 = tb.optString("title", "");
-                                            content = c2 == null ? "" : c2;
-                                            if (title == null || title.trim().isEmpty()) title = tb.optString("title", "");
-                                            JSONArray lil = tb.optJSONArray("large_image_list");
-                                            if (lil != null) {
-                                                extraImgs = new JSONArray();
-                                                for (int i = 0; i < lil.length(); i++) {
-                                                    String u;
-                                                    JSONObject o = lil.optJSONObject(i);
-                                                    if (o != null) u = o.optString("url", "");
-                                                    else u = lil.optString(i, "");
-                                                    if (!u.isEmpty() && u.startsWith("http")
-                                                            && !u.toLowerCase().contains("emoji")
-                                                            && !u.toLowerCase().contains("logo")
-                                                            && !u.toLowerCase().contains("icon")
-                                                            && !u.toLowerCase().contains("avatar")) {
-                                                        extraImgs.put(u);
+                    // 通道 × cookie 组合全部尝试（info 接口 / 移动页 RENDER_DATA；带 cookie 优先、无 cookie 兜底）
+                    String[] variants = cookieHdr == null ? new String[]{null} : new String[]{cookieHdr, null};
+                    String[][] channels = {
+                            {"info", "https://m.toutiao.com/i" + ttId + "/info/"},
+                            {"render", "https://m.toutiao.com/i" + ttId + "/"},
+                    };
+                    boolean firstAttempt = true;
+                    for (String[] ch : channels) {
+                        for (String cv : variants) {
+                            try {
+                                String body = httpGet(ch[1], true, cv);
+                                if (ch[0].equals("info")) {
+                                    JSONObject root = new JSONObject(body);
+                                    if (root.has("data")) {
+                                        JSONObject d = root.getJSONObject("data");
+                                        String content = d.optString("content", "");
+                                        String title = d.optString("title", "");
+                                        JSONArray extraImgs = null;
+                                        // 微头条（/w/ 链接）：正文在 thread.thread_base（纯文本），图片在 large_image_list
+                                        if (content == null || content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
+                                            if (d.has("thread")) {
+                                                JSONObject tb = d.getJSONObject("thread").optJSONObject("thread_base");
+                                                if (tb != null) {
+                                                    String c2 = tb.optString("content", "");
+                                                    if (c2 == null || c2.trim().isEmpty()) c2 = tb.optString("title", "");
+                                                    content = c2 == null ? "" : c2;
+                                                    if (title == null || title.trim().isEmpty()) title = tb.optString("title", "");
+                                                    JSONArray lil = tb.optJSONArray("large_image_list");
+                                                    if (lil != null) {
+                                                        extraImgs = new JSONArray();
+                                                        for (int i = 0; i < lil.length(); i++) {
+                                                            String u;
+                                                            JSONObject o = lil.optJSONObject(i);
+                                                            if (o != null) u = o.optString("url", "");
+                                                            else u = lil.optString(i, "");
+                                                            if (!u.isEmpty() && u.startsWith("http")
+                                                                    && !u.toLowerCase().contains("emoji")
+                                                                    && !u.toLowerCase().contains("logo")
+                                                                    && !u.toLowerCase().contains("icon")
+                                                                    && !u.toLowerCase().contains("avatar")) {
+                                                                extraImgs.put(u);
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
+                                        if (content != null && !content.trim().isEmpty()
+                                                && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
+                                            JSONObject res = extractToutiaoHtmlContent(content, title);
+                                            if (extraImgs != null && extraImgs.length() > 0) {
+                                                LinkedHashSet<String> seen = new LinkedHashSet<>();
+                                                JSONArray curImgs = res.optJSONArray("images");
+                                                if (curImgs != null) for (int i = 0; i < curImgs.length(); i++) seen.add(curImgs.optString(i, ""));
+                                                for (int i = 0; i < extraImgs.length(); i++) seen.add(extraImgs.optString(i, ""));
+                                                JSONArray merged = new JSONArray();
+                                                for (String s : seen) { if (merged.length() >= 30) break; merged.put(s); }
+                                                res.put("images", merged);
+                                            }
+                                            return res.toString();
+                                        }
                                     }
+                                } else {
+                                    JSONObject rd = extractToutiaoRenderData(body);
+                                    if (rd != null) return rd.toString();
                                 }
-                                if (content != null && !content.trim().isEmpty()
-                                        && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
-                                    JSONObject res = extractToutiaoHtmlContent(content, title);
-                                    if (extraImgs != null && extraImgs.length() > 0) {
-                                        LinkedHashSet<String> seen = new LinkedHashSet<>();
-                                        JSONArray cur = res.optJSONArray("images");
-                                        if (cur != null) for (int i = 0; i < cur.length(); i++) seen.add(cur.optString(i, ""));
-                                        for (int i = 0; i < extraImgs.length(); i++) seen.add(extraImgs.optString(i, ""));
-                                        JSONArray merged = new JSONArray();
-                                        for (String s : seen) { if (merged.length() >= 30) break; merged.put(s); }
-                                        res.put("images", merged);
-                                    }
-                                    return res.toString();
-                                }
+                            } catch (Exception e) {
+                                ttChannels += "（" + ch[0] + (cv == null ? "无cookie" : "带cookie") + "失败:" + e.getMessage() + "）";
                             }
-                        } catch (Exception e) {
-                            ttChannels += "（info解析失败:" + e.getMessage() + "）";
-                        }
-                    }
-                    String pageHtml = null;
-                    for (int attempt = 0; attempt < 2 && pageHtml == null; attempt++) {
-                        try {
-                            pageHtml = httpGet("https://m.toutiao.com/i" + ttId + "/", true, cookieHdr);
-                        } catch (Exception e) {
-                            ttChannels += "（移动页失败:" + e.getMessage() + "）";
-                            if (attempt == 0) { try { Thread.sleep(1200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
-                        }
-                    }
-                    if (pageHtml != null) {
-                        try {
-                            JSONObject rd = extractToutiaoRenderData(pageHtml);
-                            if (rd != null) return rd.toString();
-                        } catch (Exception e) {
-                            ttChannels += "（RENDER_DATA解析失败:" + e.getMessage() + "）";
+                            if (firstAttempt) { firstAttempt = false; }
+                            try { Thread.sleep(1200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
                         }
                     }
                 }
             }
-
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(15000);
