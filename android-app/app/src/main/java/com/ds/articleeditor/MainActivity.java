@@ -233,26 +233,50 @@ public class MainActivity extends Activity {
             if (isToutiao) {
                 String ttId = extractToutiaoId(urlStr);
                 if (ttId != null) {
-                    try {
-                        String infoJson = httpGet("https://m.toutiao.com/i" + ttId + "/info/", true);
-                        JSONObject root = new JSONObject(infoJson);
-                        if (root.has("data")) {
-                            JSONObject d = root.getJSONObject("data");
-                            String content = d.optString("content", "");
-                            if (!content.trim().isEmpty()
-                                    && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
-                                return extractToutiaoHtmlContent(content, d.optString("title", "")).toString();
-                            }
+                    // 模拟浏览器先拿 tt_webid cookie，减少被 WAF 按“无 cookie 快速请求”拦截的几率
+                    String ttCookie = toutiaoWebIdCookie();
+                    String cookieHdr = ttCookie == null ? null : ("tt_webid=" + ttCookie);
+                    // 每条通道失败时延迟 1.2s 重试一次（WAF 限流通常是暂时性的）
+                    String infoJson = null;
+                    for (int attempt = 0; attempt < 2 && infoJson == null; attempt++) {
+                        try {
+                            infoJson = httpGet("https://m.toutiao.com/i" + ttId + "/info/", true, cookieHdr);
+                        } catch (Exception e) {
+                            ttChannels += "（info接口失败:" + e.getMessage() + "）";
+                            if (attempt == 0) { try { Thread.sleep(1200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
                         }
-                    } catch (Exception e) {
-                        ttChannels += "（info接口失败:" + e.getMessage() + "）";
                     }
-                    try {
-                        String pageHtml = httpGet("https://m.toutiao.com/i" + ttId + "/", true);
-                        JSONObject rd = extractToutiaoRenderData(pageHtml);
-                        if (rd != null) return rd.toString();
-                    } catch (Exception e) {
-                        ttChannels += "（移动页失败:" + e.getMessage() + "）";
+                    if (infoJson != null) {
+                        try {
+                            JSONObject root = new JSONObject(infoJson);
+                            if (root.has("data")) {
+                                JSONObject d = root.getJSONObject("data");
+                                String content = d.optString("content", "");
+                                if (!content.trim().isEmpty()
+                                        && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
+                                    return extractToutiaoHtmlContent(content, d.optString("title", "")).toString();
+                                }
+                            }
+                        } catch (Exception e) {
+                            ttChannels += "（info解析失败:" + e.getMessage() + "）";
+                        }
+                    }
+                    String pageHtml = null;
+                    for (int attempt = 0; attempt < 2 && pageHtml == null; attempt++) {
+                        try {
+                            pageHtml = httpGet("https://m.toutiao.com/i" + ttId + "/", true, cookieHdr);
+                        } catch (Exception e) {
+                            ttChannels += "（移动页失败:" + e.getMessage() + "）";
+                            if (attempt == 0) { try { Thread.sleep(1200); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); } }
+                        }
+                    }
+                    if (pageHtml != null) {
+                        try {
+                            JSONObject rd = extractToutiaoRenderData(pageHtml);
+                            if (rd != null) return rd.toString();
+                        } catch (Exception e) {
+                            ttChannels += "（RENDER_DATA解析失败:" + e.getMessage() + "）";
+                        }
                     }
                 }
             }
@@ -300,7 +324,12 @@ public class MainActivity extends Activity {
         }
 
         /** 独立 GET 抓取（带超时/UA/Referer），返回文本 */
+        /** 独立 GET 抓取（带超时/UA/Referer），返回文本 */
         private String httpGet(String urlStr, boolean mobile) throws Exception {
+            return httpGet(urlStr, mobile, null);
+        }
+
+        private String httpGet(String urlStr, boolean mobile, String cookie) throws Exception {
             HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
             conn.setRequestMethod("GET");
             conn.setConnectTimeout(15000);
@@ -315,6 +344,7 @@ public class MainActivity extends Activity {
             conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
             conn.setRequestProperty("Accept-Encoding", "gzip");
             if (mobile) conn.setRequestProperty("Referer", "https://m.toutiao.com/");
+            if (cookie != null && !cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
 
             int code = conn.getResponseCode();
             if (code != 200) throw new Exception("HTTP " + code);
@@ -333,6 +363,28 @@ public class MainActivity extends Activity {
             if (bytes.length > 8 * 1024 * 1024) throw new Exception("页面过大");
             String charset = detectCharset(contentType, bytes);
             return new String(bytes, charset);
+        }
+
+        /** 模拟浏览器访问一次移动站，抓取 tt_webid（作为后续请求的 Cookie），拿不到返回 null */
+        private String toutiaoWebIdCookie() {
+            try {
+                HttpURLConnection conn = (HttpURLConnection) new URL("https://m.toutiao.com/").openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
+                conn.setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+                int code = conn.getResponseCode();
+                if (code != 200) { conn.disconnect(); return null; }
+                // 在 disconnect 之前读取响应头
+                String sc = conn.getHeaderField("Set-Cookie");
+                conn.disconnect();
+                Matcher m = Pattern.compile("tt_webid=([^;]+)").matcher(sc == null ? "" : sc);
+                return m.find() ? m.group(1) : null;
+            } catch (Exception e) {
+                return null;
+            }
         }
 
         /** 从头条链接中提取文章 id（/article/123... 或 /i123...） */

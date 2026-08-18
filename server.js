@@ -288,49 +288,58 @@ async function handleFetchArticle(req, res) {
   const isToutiao = /(^|\.)toutiao\.com$/i.test(hostname);
 
   // 头条电脑端网页常被“JS 反爬挑战”拦截（页面只有 _\$jsvmprt 脚本，无正文），
-  // 优先走移动端 info 接口 / RENDER_DATA，稳定拿到标题+正文+图片
+  // 优先走移动端 info 接口 / RENDER_DATA。为降低被 WAF 按“无 cookie 快速请求”识别拦截的几率：
+  // 1) 先访问一次移动站拿 tt_webid cookie；2) 带 cookie 请求；3) 失败延迟 1.2s 重试一次。
   if (isToutiao) {
     const ttId = toutiaoArticleId(url);
     if (ttId) {
+      const sleepMs = (ms) => new Promise((ok) => setTimeout(ok, ms));
+      // 模拟浏览器首次访问，获取 tt_webid cookie
+      let ttCookie = '';
+      try {
+        const seed = await fetch('https://m.toutiao.com/i' + ttId + '/', {
+          headers: { 'User-Agent': MOBILE_UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+          redirect: 'follow',
+          signal: AbortSignal.timeout(20000),
+        });
+        const sc = seed.headers.get('set-cookie') || '';
+        const cm = /tt_webid=([^;]+)/i.exec(sc);
+        if (cm) ttCookie = 'tt_webid=' + cm[1];
+      } catch { /* 拿不到 cookie 也继续尝试 */ }
       const candidates = [
         { kind: 'info', target: 'https://m.toutiao.com/i' + ttId + '/info/' },
         { kind: 'render', target: 'https://m.toutiao.com/i' + ttId + '/' },
       ];
       for (const cand of candidates) {
-        try {
-          const cRes = await fetch(cand.target, {
-            headers: {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const hdrs = {
               'User-Agent': MOBILE_UA,
               Accept: cand.kind === 'info' ? 'application/json;q=0.9,text/html;q=0.8' : 'text/html;q=0.9,*/*;q=0.8',
               'Accept-Language': 'zh-CN,zh;q=0.9',
               Referer: 'https://m.toutiao.com/',
-            },
-            redirect: 'follow',
-            signal: AbortSignal.timeout(20000),
-          });
-          if (!cRes.ok) continue;
-          const cBuf = Buffer.from(await cRes.arrayBuffer());
-          if (cBuf.length > MAX_PAGE_BYTES) continue;
-          if (cand.kind === 'info') {
-            const j = JSON.parse(cBuf.toString('utf-8'));
-            const content = j && j.data && String(j.data.content || '');
-            if (content && content.replace(/<[^>]+>/g, '').trim()) {
-              const rr = toutiaoHtmlToResult(content, j.data.title);
-              if (rr.text || rr.images.length) {
-                return sendJson(res, 200, { title: rr.title, text: rr.text, images: rr.images, url, source: 'toutiao', via: 'toutiao' });
-              }
+            };
+            if (ttCookie) hdrs.Cookie = ttCookie;
+            const cRes = await fetch(cand.target, { headers: hdrs, redirect: 'follow', signal: AbortSignal.timeout(20000) });
+            if (!cRes.ok) { if (attempt === 0) { await sleepMs(1200); continue; } break; }
+            const cBuf = Buffer.from(await cRes.arrayBuffer());
+            if (cBuf.length > MAX_PAGE_BYTES) break;
+            let rr = null;
+            if (cand.kind === 'info') {
+              const j = JSON.parse(cBuf.toString('utf-8'));
+              const content = j && j.data && String(j.data.content || '');
+              if (content && content.replace(/<[^>]+>/g, '').trim()) rr = toutiaoHtmlToResult(content, j.data.title);
+            } else {
+              const rd = extractToutiaoRenderData(cBuf.toString('utf-8'));
+              if (rd) rr = toutiaoHtmlToResult(rd.content, rd.title);
             }
-          } else {
-            const html = cBuf.toString('utf-8');
-            const rd = extractToutiaoRenderData(html);
-            if (rd) {
-              const rr = toutiaoHtmlToResult(rd.content, rd.title);
-              if (rr.text || rr.images.length) {
-                return sendJson(res, 200, { title: rr.title, text: rr.text, images: rr.images, url, source: 'toutiao', via: 'toutiao' });
-              }
+            if (rr && (rr.text || rr.images.length)) {
+              return sendJson(res, 200, { title: rr.title, text: rr.text, images: rr.images, url, source: 'toutiao', via: 'toutiao' });
             }
-          }
-        } catch { /* 尝试下一个通道 */ }
+            if (attempt === 0) { await sleepMs(1200); continue; }
+            break;
+          } catch { if (attempt === 0) { await sleepMs(1200); continue; } break; }
+        }
       }
     }
   }
