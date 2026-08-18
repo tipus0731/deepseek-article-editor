@@ -41,7 +41,7 @@
   }
 
   async function downloadDocx(buffer, name) {
-    if (window.IS_ANDROID && window.AndroidBridge && window.AndroidBridge.beginSave) {
+    if (IS_ANDROID && window.AndroidBridge && window.AndroidBridge.beginSave) {
       // 分块传输 base64（每块 12KB，3 的倍数保证 base64 拼接正确），避免大文件单次传参失败
       window.AndroidBridge.beginSave(name, false);
       const CHUNK = 0x3000;
@@ -133,11 +133,11 @@
           buffer = lastDocx.buffer;
           name = lastDocx.name;
         } else {
-          const text = window.outputText || '';
+          const text = outputText || '';
           if (!text.trim()) throw new Error('当前没有可导出的内容，请先点击「开始修改」或「智能改写」生成文章');
           // 用当前图片（优先已去水印）生成含图 Word
           const pngImages = [];
-          for (const src of (window.articleImages || []).map((x) => x.blobUrl || x.url)) {
+          for (const src of (articleImages || []).map((x) => x.blobUrl || x.url)) {
             try {
               const png = await loadImgForDocx(src);
               pngImages.push({ type: 'img', data: png.data, w: png.w, h: png.h });
@@ -157,7 +157,7 @@
     };
   }
   function updateSaveHint() {
-    document.getElementById('saveWordHint').textContent = window.IS_ANDROID
+    document.getElementById('saveWordHint').textContent = IS_ANDROID
       ? '导出后保存到手机「下载 / DeepSeek文章助手」文件夹'
       : '导出到浏览器下载目录（Ctrl+J 可查看）';
   }
@@ -176,7 +176,7 @@
     logEl.innerHTML = '';
 
     // 图片源：优先已去水印的 blob，其次原图 URL
-    const picSources = window.articleImages.map((x) => x.blobUrl || x.url);
+    const picSources = (articleImages || []).map((x) => x.blobUrl || x.url);
     let pngImages = [];
     if (picSources.length) {
       logAuto('正在准备 ' + picSources.length + ' 张图片（转换为 Word 可嵌入格式）…');
