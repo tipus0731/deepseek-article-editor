@@ -169,6 +169,9 @@ function toutiaoArticleId(url) {
   m = /\/w\/(\d{6,})/i.exec(url || ''); // 微头条 /w/ 格式
   if (m) return m[1];
   m = /\/i(\d{6,})/i.exec(url || '');
+  if (m) return m[1];
+  // 兜底：URL 中任意 6 位以上数字串（覆盖 /note/ /item/ 等新格式）
+  m = /(\d{6,})/.exec(url || '');
   return m ? m[1] : null;
 }
 function toutiaoHtmlToResult(contentHtml, title) {

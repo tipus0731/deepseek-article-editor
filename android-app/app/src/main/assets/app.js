@@ -112,6 +112,8 @@ function saveBlobAndroid(blob, name, kind) {
 
 // 直连模式下抓取网页使用的公共跨域代理（自动逐个尝试）
 const PROXIES = [
+  { name: 'corslol', build: (u) => 'https://api.cors.lol/?url=' + encodeURIComponent(u) },
+  { name: 'allorigins-json', build: (u) => 'https://api.allorigins.win/get?url=' + encodeURIComponent(u) },
   { name: 'allorigins', build: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
   { name: 'corsproxy.io', build: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
   { name: 'codetabs', build: (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u) },
@@ -286,6 +288,9 @@ function toutiaoArticleId(url) {
   m = /\/w\/(\d{6,})/i.exec(String(url)); // 微头条 /w/ 格式
   if (m) return m[1];
   m = /\/i(\d{6,})/i.exec(String(url));
+  if (m) return m[1];
+  // 兜底：URL 中任意 6 位以上数字串（覆盖 /note/ /item/ 等新格式）
+  m = /(\d{6,})/.exec(String(url));
   return m ? m[1] : null;
 }
 function toutiaoHtmlToResult(contentHtml, title) {
@@ -345,7 +350,13 @@ async function directFetchArticle(url) {
           if (!res.ok) continue;
           const buf = new Uint8Array(await res.arrayBuffer());
           if (via.kind === 'info') {
-            const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
+            let raw = new TextDecoder('utf-8').decode(buf);
+            let j = null;
+            try {
+              j = JSON.parse(raw);
+              // allorigins /get 返回 {"contents":"<json字符串>"}，需要解开一层
+              if (j && typeof j.contents === 'string' && /^[\s]*[{[]/.test(j.contents)) j = JSON.parse(j.contents);
+            } catch { j = null; }
             const d = (j && j.data) || {};
             let content = String(d.content || '');
             let title = String(d.title || '');
@@ -371,7 +382,11 @@ async function directFetchArticle(url) {
               if (r2.text || allImgs.length) return { title: r2.title, text: r2.text, images: allImgs, url, via: p.name, source: 'toutiao' };
             }
           } else {
-            const html = new TextDecoder('utf-8').decode(buf);
+            let html = new TextDecoder('utf-8').decode(buf);
+            try {
+              const w = JSON.parse(html);
+              if (w && typeof w.contents === 'string' && w.contents.includes('<')) html = w.contents;
+            } catch { /* 普通 HTML */ }
             const rd = extractToutiaoRenderDataJs(html);
             if (rd) {
               const r2 = toutiaoHtmlToResult(rd.content, rd.title);
@@ -1238,18 +1253,3 @@ function imageParagraphXml(rid, cx, cy, id) {
 function buildDocx(title, blocks) {
   // blocks: [{type:'h'|'p', text} | {type:'img', data:Uint8Array(png), w, h}]
   const media = [], rels = [];
-  let imgId = 0;
-  const bodyXml = [];
-  for (const b of blocks) {
-    if (b.type === 'img') {
-      imgId++;
-      const rid = 'rIdImg' + imgId;
-      media.push({ name: 'word/media/image' + imgId + '.png', data: b.data });
-      rels.push('<Relationship Id="' + rid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image' + imgId + '.png"/>');
-      const w = b.w || 500, h = b.h || 375;
-      const dispW = Math.min(500, w);
-      const dispH = Math.round(h * (dispW / w));
-      bodyXml.push(imageParagraphXml(rid, Math.round(dispW * 9525), Math.round(dispH * 9525), imgId));
-    } else if (b.type === 'h') {
-      bodyXml.push('<w:p><w:pPr><w:spacing w:before="160" w:after="120"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' + escXml(b.text) + '</w:t></w:r></w:p>');
-    } else {

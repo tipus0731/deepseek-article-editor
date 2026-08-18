@@ -112,6 +112,8 @@ function saveBlobAndroid(blob, name, kind) {
 
 // 直连模式下抓取网页使用的公共跨域代理（自动逐个尝试）
 const PROXIES = [
+  { name: 'corslol', build: (u) => 'https://api.cors.lol/?url=' + encodeURIComponent(u) },
+  { name: 'allorigins-json', build: (u) => 'https://api.allorigins.win/get?url=' + encodeURIComponent(u) },
   { name: 'allorigins', build: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
   { name: 'corsproxy.io', build: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
   { name: 'codetabs', build: (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u) },
@@ -286,6 +288,9 @@ function toutiaoArticleId(url) {
   m = /\/w\/(\d{6,})/i.exec(String(url)); // 微头条 /w/ 格式
   if (m) return m[1];
   m = /\/i(\d{6,})/i.exec(String(url));
+  if (m) return m[1];
+  // 兜底：URL 中任意 6 位以上数字串（覆盖 /note/ /item/ 等新格式）
+  m = /(\d{6,})/.exec(String(url));
   return m ? m[1] : null;
 }
 function toutiaoHtmlToResult(contentHtml, title) {
@@ -345,7 +350,13 @@ async function directFetchArticle(url) {
           if (!res.ok) continue;
           const buf = new Uint8Array(await res.arrayBuffer());
           if (via.kind === 'info') {
-            const j = JSON.parse(new TextDecoder('utf-8').decode(buf));
+            let raw = new TextDecoder('utf-8').decode(buf);
+            let j = null;
+            try {
+              j = JSON.parse(raw);
+              // allorigins /get 返回 {"contents":"<json字符串>"}，需要解开一层
+              if (j && typeof j.contents === 'string' && /^[\s]*[{[]/.test(j.contents)) j = JSON.parse(j.contents);
+            } catch { j = null; }
             const d = (j && j.data) || {};
             let content = String(d.content || '');
             let title = String(d.title || '');
@@ -371,7 +382,11 @@ async function directFetchArticle(url) {
               if (r2.text || allImgs.length) return { title: r2.title, text: r2.text, images: allImgs, url, via: p.name, source: 'toutiao' };
             }
           } else {
-            const html = new TextDecoder('utf-8').decode(buf);
+            let html = new TextDecoder('utf-8').decode(buf);
+            try {
+              const w = JSON.parse(html);
+              if (w && typeof w.contents === 'string' && w.contents.includes('<')) html = w.contents;
+            } catch { /* 普通 HTML */ }
             const rd = extractToutiaoRenderDataJs(html);
             if (rd) {
               const r2 = toutiaoHtmlToResult(rd.content, rd.title);

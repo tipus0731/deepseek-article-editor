@@ -433,6 +433,9 @@ public class MainActivity extends Activity {
             Matcher m = Pattern.compile("/(?:article|w)/(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
             if (m.find()) return m.group(1);
             m = Pattern.compile("/i(\\d{6,})", Pattern.CASE_INSENSITIVE).matcher(url);
+            if (m.find()) return m.group(1);
+            // 兜底：URL 中任意 6 位以上数字串（覆盖 /note/ /item/ 等新格式）
+            m = Pattern.compile("(\\d{6,})").matcher(url);
             return m.find() ? m.group(1) : null;
         }
 
