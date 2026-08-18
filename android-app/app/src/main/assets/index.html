@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek 文章修改助手</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✍️</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">✎</span>
+    <div>
+      <h1>DeepSeek 文章修改助手</h1>
+      <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <span id="serverKeyBadge" class="badge hidden" title="服务端已通过环境变量 DEEPSEEK_API_KEY 配置">已配置服务端 Key</span>
+    <div class="key-field" id="keyField">
+      <input type="password" id="apiKey" placeholder="DeepSeek API Key (sk-…)" autocomplete="off" spellcheck="false">
+      <button id="toggleKey" type="button" title="显示/隐藏">👁</button>
+    </div>
+    <select id="model" title="选择模型">
+      <option value="deepseek-chat">deepseek-chat（快速）</option>
+      <option value="deepseek-reasoner">deepseek-reasoner（深度思考，较慢）</option>
+    </select>
+  </div>
+</header>
+
+<div id="modeBanner" class="mode-banner hidden"></div>
+
+<main>
+  <div class="col-left">
+    <!-- ============ 输入区 ============ -->
+    <section class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="paste">📋 粘贴文本</button>
+        <button class="tab" data-tab="link">🔗 导入链接</button>
+      </div>
+
+      <div class="tabpane" id="pane-paste">
+        <div class="pane-head">
+          <span>原文内容</span>
+          <button id="sampleBtn" class="btn ghost sm" type="button">填入示例文章</button>
+        </div>
+        <textarea id="inputText" class="input-box" placeholder="在此粘贴要修改的文章…"></textarea>
+      </div>
+
+      <div class="tabpane hidden" id="pane-link">
+        <div class="link-row">
+          <input id="linkUrl" class="input-box inline" type="url" placeholder="https://www.toutiao.com/article/… 或任意文章链接" spellcheck="false">
+          <button id="fetchBtn" class="btn primary" type="button">抓取正文</button>
+        </div>
+        <p class="hint">今日头条链接将提取 article-content 正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+
+        <div id="linkArticle" class="hidden">
+          <div class="article-meta">
+            <strong id="linkTitle"></strong>
+            <span id="linkSourceTag" class="source-tag hidden">今日头条</span>
+            <button id="useTextBtn" class="btn ghost sm" type="button">将文本用于修改 →</button>
+          </div>
+          <textarea id="linkResult" class="input-box" placeholder="抓取到的正文（可直接编辑）…"></textarea>
+
+          <div id="imgPanel" class="hidden">
+            <div class="rule-head">
+              <h3>🖼 图片去水印（本地 JS 裁切）</h3>
+            </div>
+            <div class="img-controls">
+              <label class="field inline-field"><span>水印位置</span>
+                <select id="wmPos">
+                  <option value="bottom-right">右下角</option>
+                  <option value="bottom-left">左下角</option>
+                  <option value="top-right">右上角</option>
+                  <option value="top-left">左上角</option>
+                  <option value="bottom">底部整条</option>
+                </select>
+              </label>
+              <label class="field inline-field"><span>裁切比例 <b id="wmRatioVal">12%</b></span>
+                <input type="range" id="wmRatio" min="5" max="40" value="12">
+              </label>
+              <button id="cropAllBtn" class="btn primary sm" type="button">✂ 一键去水印</button>
+              <button id="downloadAllBtn" class="btn sm" type="button">下载全部</button>
+            </div>
+            <div id="imgGrid" class="img-grid"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="char-line">
+        <span id="inputCount">0 字</span>
+        <span id="inputWarn" class="warn hidden">⚠ 内容超过 30000 字，建议精简后再修改</span>
+      </div>
+    </section>
+
+    <!-- ============ 修改条件 ============ -->
+    <section class="card rules-card">
+      <h2>⚙ 修改条件</h2>
+
+      <div class="rule-block">
+        <div class="rule-head">
+          <h3>🚫 禁止词 / 敏感词</h3>
+          <div class="mini-actions">
+            <button id="loadPreset" class="btn ghost sm" type="button">载入示例（广告法极限词）</button>
+            <button id="clearWords" class="btn ghost sm" type="button">清空</button>
+          </div>
+        </div>
+        <div id="wordChips" class="chips"></div>
+        <div class="chip-input-row">
+          <input id="wordInput" class="input-box inline" placeholder="输入禁止词，回车添加，如：最佳、国家级…">
+          <button id="addWord" class="btn sm" type="button">添加</button>
+        </div>
+      </div>
+
+      <div class="rule-grid">
+        <label class="field">
+          <span>语气风格</span>
+          <select id="style">
+            <option value="keep">保持原风格</option>
+            <option value="formal">正式书面</option>
+            <option value="plain">平实易懂</option>
+            <option value="casual">轻松口语</option>
+            <option value="warm">热情有感染力</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>篇幅调整</span>
+          <select id="length">
+            <option value="keep">保持原文篇幅</option>
+            <option value="shrink">精简（去冗余）</option>
+            <option value="expand">扩写（更详细）</option>
+          </select>
+        </label>
+        <label class="field hidden" id="targetLenField">
+          <span>目标字数（约）</span>
+          <input type="number" id="targetLen" min="100" max="30000" step="100" value="1000">
+        </label>
+        <label class="field">
+          <span>目标读者</span>
+          <select id="audience">
+            <option value="general">通用大众</option>
+            <option value="professional">专业人士</option>
+            <option value="consumer">消费者 / 客户</option>
+            <option value="student">学生</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="checks">
+        <label><input type="checkbox" id="optAd" checked> 去除广告与无关信息</label>
+        <label><input type="checkbox" id="optProof" checked> 修正错别字与语法</label>
+        <label><input type="checkbox" id="optHead"> 长文自动分节并加小标题</label>
+        <label><input type="checkbox" id="optFact" checked> 保留事实数据，不编造内容</label>
+      </div>
+
+      <label class="field custom-req-field">
+        <span>✍️ 自定义修改要求（选填）</span>
+        <textarea id="customReq" rows="2" placeholder="例如：删除第一段；结尾加上行动呼吁；突出环保主题；把全文改写为第三人称…"></textarea>
+      </label>
+    </section>
+
+    <!-- ============ 提示词设置（本地存储，不受 APK 版本更新影响） ============ -->
+    <section class="card prompt-card">
+      <details>
+        <summary>⚙ 提示词设置（存本地 · 升级不丢 · 留空=用默认）</summary>
+        <div class="prompt-body">
+          <label class="field">
+            <span>系统提示词（角色设定）</span>
+            <textarea id="sysPrompt" rows="4" placeholder="留空使用内置默认提示词…"></textarea>
+          </label>
+          <label class="field">
+            <span>图片嵌入提示词</span>
+            <textarea id="imgPrompt" rows="2" placeholder="留空使用默认：保留 [图片] 占位标记…"></textarea>
+          </label>
+          <label class="field">
+            <span>降重提示词（{sim} 会被替换为当前重复度百分比）</span>
+            <textarea id="dedupPrompt" rows="3" placeholder="留空使用默认降重提示词…"></textarea>
+          </label>
+          <div class="prompt-actions">
+            <button id="savePromptsBtn" class="btn primary sm" type="button">💾 保存提示词</button>
+            <button id="resetPromptsBtn" class="btn ghost sm" type="button">恢复默认</button>
+            <span class="prompt-hint">保存后写入本地存储（Android：应用私有区 SharedPreferences；网页：localStorage）</span>
+          </div>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <div class="col-right">
+    <!-- ============ 输出区 ============ -->
+    <section class="card output-card">
+      <div class="output-head">
+        <h2>📄 修改结果</h2>
+        <div class="mini-actions">
+          <div class="seg">
+            <button class="seg-btn active" data-view="result" type="button">结果</button>
+            <button class="seg-btn" data-view="diff" type="button">对照差异</button>
+          </div>
+          <button id="copyBtn" class="btn sm" type="button">复制</button>
+          <button id="downloadBtn" class="btn sm" type="button">下载 .txt</button>
+          <button id="clearOut" class="btn ghost sm" type="button">清空</button>
+          <button id="smartBtn" class="btn primary sm" type="button" title="AI 自动改写 → 判重（≤5% 达标 / ≥8% 重试，最多 3 次）→ 嵌入原图保存 Word">🪄 智能改写+判重保存 Word</button>
+        </div>
+      </div>
+
+      <div id="status" class="status hidden"></div>
+
+      <div id="simDisplay" class="sim-display hidden">
+        <div class="sim-head">🔍 查重 · 重复率（文皮皮思路 · 全文文本相似度，目标 ≤5%）</div>
+        <div class="sim-body">
+          <span id="simValue" class="sim-value">--</span>
+          <span id="simStatus" class="sim-status"></span>
+        </div>
+        <div id="simAttempts" class="sim-attempts"></div>
+      </div>
+
+      <div id="previewArea" class="preview hidden">
+        <div class="preview-head">📄 导出预览（含插入图片）</div>
+        <div id="previewBody" class="preview-body"></div>
+      </div>
+
+      <div id="saveWordRow" class="save-row">
+        <button id="saveWordBtn" class="btn primary" type="button">💾 导出 Word 文档</button>
+        <span id="saveWordHint" class="save-hint">随时可导出当前生成的文章；智能改写完成后将包含判重信息与插入图片</span>
+      </div>
+
+      <div id="autoLog" class="auto-log hidden"></div>
+      <div id="outResult" class="output hidden"></div>
+      <div id="outDiff" class="output hidden">
+        <div class="diff-legend">
+          <span class="lg-add">新增 / 替换</span>
+          <span class="lg-del">删除 / 原文</span>
+        </div>
+        <div id="diffBody"></div>
+      </div>
+      <div id="outEmpty" class="empty">尚未生成。<br>填写输入与修改条件后，点击下方「开始修改」。</div>
+      <div class="char-line"><span id="outCount">0 字</span></div>
+    </section>
+
+    <div class="action-bar">
+      <button id="runBtn" class="btn primary big" type="button">⚡ 开始修改（Ctrl+Enter）</button>
+      <button id="stopBtn" class="btn danger big hidden" type="button">⏹ 停止</button>
+    </div>
+
+    <div id="reasonBox" class="card hidden">
+      <details>
+        <summary>🧠 模型思考过程（deepseek-reasoner）</summary>
+        <pre id="reasonText"></pre>
+      </details>
+    </div>
+  </div>
+</main>
+
+<footer>API Key 仅保存在浏览器本地（localStorage）。直接双击打开本页为「直连模式」，请求直达 api.deepseek.com；通过 node server.js 访问则为「本地服务模式」（可导入链接）。生成结果请人工复核后再发布。</footer>
+
+<script src="app.js"></script>
+<script src="smart-rewrite.js"></script>
+</body>
+</html>
