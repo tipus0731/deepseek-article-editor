@@ -1071,6 +1071,7 @@ function loadPromptSettings() {
   fillPromptGroup(active);
 }
 els.promptGroupSel.addEventListener('change', () => {
+  clearTimeout(promptAutosaveTimer); // 切换前先取消待写入的防抖，避免时序混乱
   const groups = getPromptGroups();
   // 1) 先把【当前正在展示的组】的编辑内容保存回它自己的槽位，防止切换丢失
   const prev = groups.find((x) => x.id === promptGroupId) || groups[0];
@@ -1082,6 +1083,22 @@ els.promptGroupSel.addEventListener('change', () => {
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
   fillPromptGroup(next);
 });
+/* 输入即自动保存（防抖 400ms）：无论是否切组，当前编辑内容实时落进当前组，
+   避免「输入后未切组/未点保存就刷新或退出」导致丢失，保证切换组时能看到该组内容。 */
+function saveCurrentPromptNow() {
+  const groups = getPromptGroups();
+  const g = groups.find((x) => x.id === promptGroupId) || groups[0];
+  if (g) { g.sys = els.sysPrompt.value.trim(); g.dedup = els.dedupPrompt.value.trim(); }
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+}
+let promptAutosaveTimer = null;
+function autosaveCurrentPrompt() {
+  clearTimeout(promptAutosaveTimer);
+  promptAutosaveTimer = setTimeout(saveCurrentPromptNow, 400);
+}
+els.sysPrompt.addEventListener('input', autosaveCurrentPrompt);
+els.dedupPrompt.addEventListener('input', autosaveCurrentPrompt);
+window.addEventListener('beforeunload', saveCurrentPromptNow);
 /* ---- 模型与接口设置（本地存储） ---- */
 function loadModelSettings() {
   const t = storeGet('dsw_thinking');
