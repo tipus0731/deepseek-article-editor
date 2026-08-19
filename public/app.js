@@ -1112,7 +1112,7 @@ function loadModelSettings() {
   syncThinkingUI();
 }
 function syncThinkingUI() {
-  // 思考模式开启 → Pro（reasoner）；关闭 → Flash（chat）
+  // 思考模式开启 → Pro（deepseek-v4-pro）；关闭 → Flash（deepseek-v4-flash）
   els.model.value = els.thinking.checked ? 'deepseek-v4-pro' : 'deepseek-v4-flash';
   els.effortField.classList.toggle('hidden', !els.thinking.checked);
 }
@@ -1235,9 +1235,9 @@ els.length.addEventListener('change', () => {
   if (savedKey) els.apiKey.value = savedKey;
 
   // 模型下拉框与「思考模式」开关双向一致（以思考模式为唯一真源，默认开启深度思考）：
-  // 下拉框选 Pro  ⇔ 思考开；选 Flash ⇔ 思考关。保证“选 Pro”就真的调用 deepseek-reasoner。
+  // 下拉框选 Pro  ⇔ 思考开；选 Flash ⇔ 思考关。保证“选 Pro”就真的调用 deepseek-v4-pro。
   els.model.addEventListener('change', () => {
-    els.thinking.checked = els.model.value === 'deepseek-reasoner';
+    els.thinking.checked = els.model.value === 'deepseek-v4-pro';
     if (els.effortField) els.effortField.classList.toggle('hidden', !els.thinking.checked);
     storeSet('dsw_model', els.model.value);
     storeSet('dsw_thinking', els.thinking.checked ? '1' : '0');
