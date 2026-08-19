@@ -8,6 +8,7 @@ const els = {
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
   linkUrl: $('linkUrl'), fetchBtn: $('fetchBtn'), linkResult: $('linkResult'),
+  batchConc: $('batchConc'),
   wordChips: $('wordChips'), wordInput: $('wordInput'), addWord: $('addWord'),
   loadPreset: $('loadPreset'), clearWords: $('clearWords'),
   style: $('style'), length: $('length'), targetLenField: $('targetLenField'),
@@ -64,10 +65,10 @@ function storeRemove(key) {
 const IS_ANDROID = typeof window.AndroidBridge !== 'undefined';
 
 /* ================= 软件试用期限制（到期禁用） =================
- * 到期时间：2026-08-20 00:00（北京时间）= 2026-08-19T16:00:00Z
+ * 到期时间：2026-08-22 00:00（北京时间）= 2026-08-21T16:00:00Z
  * 到期后：页面弹遮罩、按钮禁用，核心函数全部拦截（改日期请改下面这一处）。
  */
-const EXPIRY_MS = Date.parse('2026-08-19T16:00:00Z'); // 1787155200000
+const EXPIRY_MS = Date.parse('2026-08-21T16:00:00Z'); // 1787328000000
 function isExpired() { return Date.now() >= EXPIRY_MS; }
 function enforceExpiry() {
   if (!isExpired()) return false;
@@ -77,7 +78,7 @@ function enforceExpiry() {
   ov.innerHTML =
     '<div class="expiry-box">' +
     '<div class="expiry-title">🚫 软件已到期</div>' +
-    '<p>本软件试用期已于 <b>2026年8月20日</b> 到期，功能已停止使用。</p>' +
+    '<p>本软件试用期已于 <b>2026年8月22日</b> 到期，功能已停止使用。</p>' +
     '<p>如需继续使用，请联系开发者授权。</p>' +
     '</div>';
   document.body.appendChild(ov);
@@ -756,7 +757,7 @@ function resetOutput() {
 }
 
 async function runRewrite() {
-  if (isExpired()) { flash('软件已到期（2026-08-20），功能已停止使用', true); return; }
+  if (isExpired()) { flash('软件已到期（2026-08-22），功能已停止使用', true); return; }
   if (running) return;
   const text = getSourceText();
   if (!text) return;
@@ -1074,6 +1075,8 @@ function loadModelSettings() {
   els.effort.value = ['max', 'high', 'medium', 'low'].includes(e) ? e : 'max';
   els.apiBase.value = storeGet('dsw_api_base') || '';
   els.customModel.value = storeGet('dsw_custom_model') || '';
+  const bc = storeGet('dsw_batch_conc');
+  if (bc && els.batchConc && [...els.batchConc.options].some((o) => o.value === bc)) els.batchConc.value = bc;
   syncThinkingUI();
 }
 function syncThinkingUI() {
@@ -1083,6 +1086,7 @@ function syncThinkingUI() {
 }
 els.thinking.addEventListener('change', () => { syncThinkingUI(); storeSet('dsw_thinking', els.thinking.checked ? '1' : '0'); });
 els.effort.addEventListener('change', () => storeSet('dsw_effort', els.effort.value));
+if (els.batchConc) els.batchConc.addEventListener('change', () => storeSet('dsw_batch_conc', els.batchConc.value));
 els.saveModelBtn.addEventListener('click', () => {
   storeSet('dsw_thinking', els.thinking.checked ? '1' : '0');
   storeSet('dsw_effort', els.effort.value);

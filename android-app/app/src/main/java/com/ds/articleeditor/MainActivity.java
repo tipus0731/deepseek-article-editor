@@ -94,11 +94,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        // 软件试用期限制：2026-08-20 00:00（北京时间）到期后在原生层直接拦截，不加载应用
-        if (System.currentTimeMillis() >= 1787155200000L) {
+        // 软件试用期限制：2026-08-22 00:00（北京时间）到期后在原生层直接拦截，不加载应用
+        if (System.currentTimeMillis() >= 1787328000000L) {
             new AlertDialog.Builder(this)
                     .setTitle("软件已到期")
-                    .setMessage("本软件试用期已于 2026年8月20日 到期，功能已停止使用。\n如需继续使用，请联系开发者授权。")
+                    .setMessage("本软件试用期已于 2026年8月22日 到期，功能已停止使用。\n如需继续使用，请联系开发者授权。")
                     .setPositiveButton("退出", (d, w) -> finish())
                     .setCancelable(false)
                     .show();
@@ -232,8 +232,10 @@ public class MainActivity extends Activity {
 
         /* ---- 原生并行 AI 改写（Java 线程池） ----
          * 批量并发时 JS 一次性提交全部改写任务；每个任务在独立线程调用 DeepSeek /
-         * 自定义 OpenAI 兼容接口（非流式，同步返回全文），不受 WebView 同域连接数限制。 */
-        private static final int MAX_AI_THREADS = 10;
+         * 自定义 OpenAI 兼容接口（非流式，同步返回全文），不受 WebView 同域连接数限制。
+         * 线程数 = min(任务数, 前端所选并发数, MAX_AI_THREADS)；并发数由页面「并发」下拉框传入
+         * （0 = 不限，此时用 MAX_AI_THREADS 作为安全上限，避免在手机上过度开线程）。 */
+        private static final int MAX_AI_THREADS = 100;
 
         @JavascriptInterface
         public void batchAiRewrite(final String tasksJson, final String cbId) {
@@ -241,7 +243,10 @@ public class MainActivity extends Activity {
                 final JSONArray tasks = new JSONArray(tasksJson == null ? "[]" : tasksJson);
                 final int n = tasks.length();
                 if (n == 0) { jsAiCallback(cbId, "", "{\"ok\":false,\"error\":\"无任务\"}"); return; }
-                final ExecutorService pool = Executors.newFixedThreadPool(Math.min(n, MAX_AI_THREADS));
+                int reqConc = n > 0 ? tasks.getJSONObject(0).optInt("concurrency", 0) : 0;
+                int poolSize = Math.max(1, Math.min(n, reqConc > 0 ? reqConc : MAX_AI_THREADS));
+                poolSize = Math.min(poolSize, MAX_AI_THREADS);
+                final ExecutorService pool = Executors.newFixedThreadPool(poolSize);
                 for (int k = 0; k < n; k++) {
                     final int idx = k;
                     final JSONObject task = tasks.getJSONObject(idx);

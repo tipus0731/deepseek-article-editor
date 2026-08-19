@@ -59,9 +59,18 @@
         <div class="link-row">
           <button id="clearLinkBtn" class="btn ghost sm" type="button">🧹 清除全部</button>
           <button id="fetchBtn" class="btn primary" type="button">抓取正文（首条）</button>
-          <button id="batchBtn" class="btn primary sm" type="button" title="并发抓取每条链接 → AI 按修改条件改写 → 自动导出含图片的 Word（默认去除水印）">📚 并发批量生成 Word</button>
+          <button id="batchBtn" class="btn primary sm" type="button" title="按所选并发数处理每条链接 → 抓取 → AI 改写 → 自动导出含图片的 Word（默认去除水印）">📚 并发批量生成 Word</button>
+          <label class="batch-conc" title="同时处理的链接数量；「不限」= 所有链接同时处理">并发
+            <select id="batchConc">
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="500">500</option>
+              <option value="0">不限</option>
+            </select>
+          </label>
         </div>
-        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会并发抓取、改写并导出 Word（文件名 = 正文前 10 字 + 重复率），每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>分批处理（例如 4000 条链接选 10 = 每批同时处理 10 条，抓取→AI改写→导出 Word 全程受控；选 不限 = 全部同时处理），文件名 = 正文前 10 字 + 重复率，每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
 
         <div id="linkArticle" class="hidden">
           <div class="article-meta">

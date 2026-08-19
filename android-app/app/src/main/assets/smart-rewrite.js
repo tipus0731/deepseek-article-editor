@@ -253,7 +253,7 @@
   }
 
   async function runSmartRewrite() {
-    if (isExpired()) { setStatus('软件已到期（2026-08-20），功能已停止使用', 'error'); return; }
+    if (isExpired()) { setStatus('软件已到期（2026-08-22），功能已停止使用', 'error'); return; }
     if (window.__smartBusy) return;
     const original = getSourceText();
     if (!original) return;
@@ -416,9 +416,31 @@
     });
   }
 
+  /* 并发限流工具：同时最多运行 limit 个任务；limit<=0 或 Infinity 表示「不限」（全部同时）。
+     返回与 items 对齐的结果数组；任务抛错时该位置为 Error 对象。 */
+  function mapConcurrent(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0, done = 0;
+    const max = (Number.isFinite(limit) && limit > 0) ? Math.floor(limit) : Infinity;
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (next >= items.length) return;
+        const i = next++;
+        Promise.resolve()
+          .then(() => fn(items[i], i))
+          .then((v) => { results[i] = v; })
+          .catch((e) => { results[i] = (e instanceof Error) ? e : new Error(String(e)); })
+          .then(() => { if (++done === items.length) resolve(results); else tick(); });
+      };
+      const workers = Math.min(max, items.length);
+      for (let k = 0; k < workers; k++) tick();
+      if (items.length === 0) resolve(results);
+    });
+  }
+
   async function runBatchLinks() {
     if (window.__batchBusy) return;
-    if (isExpired()) { setStatus('软件已到期（2026-08-20），功能已停止使用', 'error'); return; }
+    if (isExpired()) { setStatus('软件已到期（2026-08-22），功能已停止使用', 'error'); return; }
     const urls = parseLinks();
     if (!urls.length) {
       logAuto('⚠ 链接框为空或没有有效的 http(s) 链接，请粘贴链接（每行一个）');
@@ -432,6 +454,12 @@
       ? ({ max: 'high', high: 'high', medium: 'medium', low: 'low' }[els.effort.value] || 'high')
       : '';
 
+    // 并发数量：10 / 50 / 100 / 500 / 不限（0）；抓取、AI 改写、导出 Word 三个阶段统一受控
+    const concVal = els.batchConc && els.batchConc.value != null ? String(els.batchConc.value).trim() : '10';
+    const concNum = parseInt(concVal, 10);
+    const concurrency = (Number.isFinite(concNum) && concNum > 0) ? concNum : Infinity;
+    if (els.batchConc) storeSet('dsw_batch_conc', concVal);
+
     window.__batchBusy = true;
     const btn = document.getElementById('batchBtn');
     if (btn) { btn.disabled = true; btn.textContent = '并发处理中…'; }
@@ -440,13 +468,13 @@
 
     const nativeAI = !!(IS_ANDROID && window.AndroidBridge && typeof window.AndroidBridge.batchAiRewrite === 'function');
     const tBatch = Date.now(); // 并发处理总耗时计时
-    logAuto('📚 开始并发处理 ' + urls.length + ' 个链接（所有链接同时抓取 → AI 改写 → 导出 Word，全流程并行）');
-    if (nativeAI) logAuto('🤖 已启用「原生 Java 线程池」并行调用 AI 接口（不受 WebView 同域连接数限制）');
+    logAuto('📚 开始并发处理 ' + urls.length + ' 个链接（并发上限：' + (concurrency === Infinity ? '不限' : concurrency) + '，抓取/AI改写/导出Word 全程受控）');
+    if (nativeAI) logAuto('🤖 已启用「原生 Java 线程池」并行调用 AI 接口（并发上限 ' + (concurrency === Infinity ? '不限' : concurrency) + '，安全上限见 MAX_AI_THREADS）');
 
     const articles = []; // { idx, url, title, text, pngImages, messages, tOne, ok, err, stage }
 
-    // ---- 阶段1（全并行）：抓取文章 + 裁切图片 + 组装 AI 任务 ----
-    await Promise.all(urls.map(async (url, i) => {
+    // ---- 阶段1（并发受限）：抓取文章 + 裁切图片 + 组装 AI 任务 ----
+    await mapConcurrent(urls, concurrency, async (url, i) => {
       const rec = { idx: i + 1, url, tOne: Date.now(), ok: false, err: null };
       articles.push(rec);
       setStatus('正在同时处理 ' + rec.idx + '/' + urls.length + ' 篇…', 'loading');
@@ -472,7 +500,7 @@
         rec.err = e.message;
         logAuto('❌ 第 ' + rec.idx + ' 条抓取/图片失败：' + e.message);
       }
-    }));
+    });
 
     // ---- 阶段2（全并行）：AI 改写 + 自动判重降重（最多 3 轮；Android 原生 Java 线程池，Web JS 并行流式） ----
     // 判定标准：≤5% 达标；5%~8% 合格；≥8% 自动带降重要求重写（最多 3 轮后不再尝试）
@@ -488,12 +516,14 @@
       pending.forEach((a) => { a.messages = buildSmartMessages(a.text, attempt > 1 ? a.lastSim : null); });
       let round;
       if (nativeAI) {
+        // 0 = 不限；Java 线程池按该值调度（Android 安全上限见 MainActivity.MAX_AI_THREADS）
         const texts = await nativeAiBatch(pending.map((a) => ({
           id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
+          concurrency: concurrency === Infinity ? 0 : concurrency,
         })));
         round = texts;
       } else {
-        round = await Promise.all(pending.map(async (a) => {
+        round = await mapConcurrent(pending, concurrency, async (a) => {
           const collector = { text: '' };
           try {
             await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
@@ -501,7 +531,7 @@
           } catch (e) {
             return { __err: e.message };
           }
-        }));
+        });
       }
       const next = []; // 还需要降重、进入下一轮的文章
       round.forEach((r, j) => {
@@ -525,8 +555,8 @@
     // 兜底：任何漏网文章标记失败（正常情况下不会发生）
     ready.forEach((a) => { if (!aiResults.has(a.idx)) aiResults.set(a.idx, { ok: false, err: 'AI 改写未完成' }); });
 
-    // ---- 阶段3（全并行）：构建并导出 Word（文件名 = 正文前 10 字 + 重复率） ----
-    await Promise.all(ready.map(async (a) => {
+    // ---- 阶段3（并发受限）：构建并导出 Word（文件名 = 正文前 10 字 + 重复率） ----
+    await mapConcurrent(ready, concurrency, async (a) => {
       const r = aiResults.get(a.idx);
       if (!r || !r.ok) { a.ok = false; a.err = (r && r.err) || 'AI 未返回内容'; a.stage = '改写'; return; }
       try {
@@ -544,7 +574,7 @@
         a.ok = false; a.err = e.message; a.stage = '导出';
         logAuto('❌ 第 ' + a.idx + ' 条导出失败：' + e.message);
       }
-    }));
+    });
 
     const totalMs = Date.now() - tBatch; // 并发处理总耗时
     const okList = articles.filter((a) => a.ok);
