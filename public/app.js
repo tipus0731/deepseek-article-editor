@@ -522,6 +522,12 @@ const DEFAULT_SYSTEM_PROMPT =
   '4. 输出应是一篇连贯、完整、可直接发布的文章。';
 const DEFAULT_IMG_PROMPT = '若原文中包含 [图片] 标记，请在改写后的对应位置原样保留这些 [图片] 标记（每个标记单独占一行），以便后续把原图嵌入文档。';
 const DEFAULT_DEDUP_PROMPT = '【降重要求】上一版与原文相似度 {sim}% 偏高（目标 ≤5%）。请进行更大程度的改写：调整句式结构、更换同义表达、重组段落顺序、增删过渡内容，但不得改变事实与数据，也不得编造。';
+/* 底层提示词组（隐藏、不可关闭、不可在界面编辑）：
+ * 始终追加在当前系统提示词之后，不占用用户提示词组、不与任何用户配置冲突——
+ * 用户配置的组完全不受影响，而 AI 默认被要求尽量降低与原文的重复率（目标 ≤5%），并与重复率校验配合使用。 */
+const BOTTOM_SYS_PROMPT =
+  '【底层要求·不可关闭】请在确保事实与数据准确的前提下，把文章改写为与原文重复率尽可能低的原创表达（目标重复率 ≤5%）：' +
+  '调整句式结构、进行同义替换、重组段落顺序、增删过渡衔接；但不得改变原文的关键事实、数据、人名、时间与引用，也不得编造或臆测内容。';
 /* ---- 多组提示词（本地存储；旧版单组数据自动迁移为第一组） ---- */
 const PROMPT_GROUPS_KEY = 'dsw_prompt_groups';
 const PROMPT_ACTIVE_KEY = 'dsw_prompt_active';
@@ -608,7 +614,8 @@ function buildMessages(text) {
     rules.push('目标读者：面向「' + (audienceMap[els.audience.value] || '普通大众') + '」，据此调整用词深浅与解释详略。');
   }
 
-  const system = getSysPrompt();
+  // 底层提示词组永远生效：追加在用户当前组的系统提示词之后（不替换、不覆盖、隐藏不展示）
+  const system = getSysPrompt() + '\n\n' + BOTTOM_SYS_PROMPT;
 
   const user =
     '请根据以下规则修改文章：\n' +

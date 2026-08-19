@@ -474,31 +474,56 @@
       }
     }));
 
-    // ---- 阶段2（全并行）：AI 改写（Android 走原生 Java 线程池；Web 走 JS 并行流式） ----
-    const aiResults = new Map(); // idx -> { ok, text } | { ok:false, err }
+    // ---- 阶段2（全并行）：AI 改写 + 自动判重降重（最多 3 轮；Android 原生 Java 线程池，Web JS 并行流式） ----
+    // 判定标准：≤5% 达标；5%~8% 合格；≥8% 自动带降重要求重写（最多 3 轮后不再尝试）
+    const aiResults = new Map(); // idx -> { ok, text, sim } | { ok:false, err }
     const ready = articles.filter((a) => a.ok);
-    logAuto('⏳ AI 改写中（' + ready.length + ' 篇，' + (model === 'deepseek-reasoner' ? '思考模型' : '快速模型')
-      + (nativeAI ? '，原生 Java 多线程' : '，JS 并行') + '）…');
-    if (nativeAI) {
-      const texts = await nativeAiBatch(ready.map((a) => ({
-        id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
-      })));
-      texts.forEach((r, j) => {
-        const a = ready[j];
-        if (r && r.__err) aiResults.set(a.idx, { ok: false, err: r.__err });
-        else aiResults.set(a.idx, { ok: true, text: String(r || '').trim() });
+    const cutoff = (sim) => (sim <= 0.05 ? '✅ 达标（≤5%）' : sim < 0.08 ? '✅ 合格（5%~8%）' : '⚠ 超标（≥8%）');
+    let pending = ready.slice(); // 当前轮待改写的文章
+    for (let attempt = 1; attempt <= 3 && pending.length; attempt++) {
+      logAuto('⏳ AI 改写 第 ' + attempt + '/3 轮（' + pending.length + ' 篇，'
+        + (model === 'deepseek-reasoner' ? '思考模型' : '快速模型')
+        + (nativeAI ? '，原生 Java 多线程' : '，JS 并行') + '）…');
+      // 第 1 轮用原始要求；之后的轮次携带上轮重复率自动追加降重要求（buildSmartMessages 内含底层提示词组）
+      pending.forEach((a) => { a.messages = buildSmartMessages(a.text, attempt > 1 ? a.lastSim : null); });
+      let round;
+      if (nativeAI) {
+        const texts = await nativeAiBatch(pending.map((a) => ({
+          id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
+        })));
+        round = texts;
+      } else {
+        round = await Promise.all(pending.map(async (a) => {
+          const collector = { text: '' };
+          try {
+            await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
+            return String(collector.text || '').trim();
+          } catch (e) {
+            return { __err: e.message };
+          }
+        }));
+      }
+      const next = []; // 还需要降重、进入下一轮的文章
+      round.forEach((r, j) => {
+        const a = pending[j];
+        if (r && r.__err) { aiResults.set(a.idx, { ok: false, err: r.__err }); return; }
+        let out = String(r || '').trim();
+        if (!out) { aiResults.set(a.idx, { ok: false, err: 'AI 未返回内容' }); return; }
+        const cut = cutFactCheck(out); // 剔除「事实核查表」及之后内容
+        if (cut.length < out.length) logAuto('✂ [第 ' + a.idx + ' 篇] 已剔除「事实核查表」及其后的内容');
+        out = cut;
+        const sim = textSimilarity(a.text, out); // 本轮重复率（8-gram Jaccard）
+        a.lastSim = sim;
+        const pct = (sim * 100).toFixed(1);
+        logAuto('[第 ' + a.idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + cutoff(sim)
+          + (sim >= 0.08 && attempt < 3 ? '，继续降重…' : ''));
+        if (sim >= 0.08 && attempt < 3) { next.push(a); return; }
+        aiResults.set(a.idx, { ok: true, text: out, sim });
       });
-    } else {
-      await Promise.all(ready.map(async (a) => {
-        const collector = { text: '' };
-        try {
-          await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
-          aiResults.set(a.idx, { ok: true, text: String(collector.text || '').trim() });
-        } catch (e) {
-          aiResults.set(a.idx, { ok: false, err: e.message });
-        }
-      }));
+      pending = next;
     }
+    // 兜底：任何漏网文章标记失败（正常情况下不会发生）
+    ready.forEach((a) => { if (!aiResults.has(a.idx)) aiResults.set(a.idx, { ok: false, err: 'AI 改写未完成' }); });
 
     // ---- 阶段3（全并行）：构建并导出 Word（文件名 = 正文前 10 字 + 重复率） ----
     await Promise.all(ready.map(async (a) => {
@@ -507,10 +532,8 @@
       try {
         let out = String(r.text || '').trim();
         if (!out) throw new Error('AI 未返回内容');
-        const cut = cutFactCheck(out); // 剔除「事实核查表」及之后内容
-        if (cut.length < out.length) logAuto('✂ [第 ' + a.idx + ' 篇] 已剔除「事实核查表」及其后的内容');
-        out = cut;
-        const sim = textSimilarity(a.text, out); // 本次重复率
+        // 重复率在阶段2判重时已算好（r.sim），直接复用保证文件名与该次判定一致
+        const sim = r.sim != null ? r.sim : textSimilarity(a.text, out);
         const blocks = blocksWithImages(a.text, out, a.pngImages || []);
         const docxName = docxNameFromText(out, a.title || ('文章' + a.idx), sim);
         const docxBuf = buildDocx(a.title || '生成文章', blocks);
