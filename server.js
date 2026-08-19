@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * DeepSeek 文章修改助手 · 本地服务
+ * 文章助手 · 本地服务
  * ----------------------------------
  * 零依赖实现，需要 Node.js 18+（内置 fetch）。
  *
@@ -486,7 +486,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────────');
-  console.log('  DeepSeek 文章修改助手 已启动');
+  console.log('  文章助手 v1.23 已启动');
   console.log('  访问地址: http://' + HOST + ':' + PORT);
   console.log(
     SERVER_KEY

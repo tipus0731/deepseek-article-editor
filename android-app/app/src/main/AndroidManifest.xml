@@ -6,7 +6,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
-        android:label="DeepSeek文章助手"
+        android:label="文章助手"
         android:icon="@android:drawable/sym_def_app_icon"
         android:allowBackup="true"
         android:supportsRtl="true">

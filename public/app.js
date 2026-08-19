@@ -620,7 +620,8 @@ function buildMessages(text) {
 }
 
 /* ================= 流式调用 DeepSeek ================= */
-async function streamRewrite(body, signal) {
+async function streamRewrite(body, signal, out) {
+  // out = {text:''}（可选）：批量并发时传入，增量写入 out.text，不再写全局 outputText / 更新界面
   if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let res;
   if (DIRECT) {
@@ -714,13 +715,19 @@ async function streamRewrite(body, signal) {
       if (!delta) continue;
       if (delta.reasoning_content) {
         reasoningBuf += delta.reasoning_content;
-        els.reasonText.appendChild(document.createTextNode(delta.reasoning_content));
-        els.reasonBox.classList.remove('hidden');
+        if (!out) {
+          els.reasonText.appendChild(document.createTextNode(delta.reasoning_content));
+          els.reasonBox.classList.remove('hidden');
+        }
       }
       if (delta.content) {
-        outputText += delta.content;
-        els.outResult.appendChild(document.createTextNode(delta.content));
-        updateCounts();
+        if (out) {
+          out.text += delta.content;
+        } else {
+          outputText += delta.content;
+          els.outResult.appendChild(document.createTextNode(delta.content));
+          updateCounts();
+        }
       }
     }
   }
@@ -940,10 +947,10 @@ async function copyOutput() {
 function downloadOutput() {
   if (!outputText) { flash('暂无内容可下载', true); return; }
   const blob = new Blob(['\uFEFF' + outputText], { type: 'text/plain;charset=utf-8' });
-  const name = 'DeepSeek修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
+  const name = '文章助手修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
   if (IS_ANDROID) {
     saveBlobAndroid(blob, name, 'text')
-      .then(() => flash('已保存到 下载/DeepSeek文章助手'))
+      .then(() => flash('已保存到 Pictures/文章助手'))
       .catch((e) => flash('保存失败：' + e.message, true));
     return;
   }
@@ -1582,7 +1589,7 @@ function downloadOne(i) {
     fetch(item.blobUrl)
       .then((r) => r.blob())
       .then((b) => saveBlobAndroid(b, '去水印图片_' + (i + 1) + '.webp', 'image'))
-      .then(() => flash('已保存到相册 /DeepSeek文章助手'))
+      .then(() => flash('已保存到相册 /文章助手'))
       .catch((e) => flash('保存失败：' + e.message, true));
     return;
   }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DeepSeek 文章修改助手</title>
+<title>文章助手</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✍️</text></svg>">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -13,7 +13,10 @@
   <div class="brand">
     <span class="logo">✎</span>
     <div>
-      <h1>DeepSeek 文章修改助手</h1>
+      <div class="brand-title">
+        <h1>文章助手</h1>
+        <span class="badge" title="版本号">v1.23</span>
+      </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
   </div>
@@ -56,9 +59,9 @@
         <div class="link-row">
           <button id="clearLinkBtn" class="btn ghost sm" type="button">🧹 清除全部</button>
           <button id="fetchBtn" class="btn primary" type="button">抓取正文（首条）</button>
-          <button id="batchBtn" class="btn primary sm" type="button" title="依次抓取每条链接 → AI 按修改条件改写 → 自动导出含图片的 Word">📚 批量生成 Word</button>
+          <button id="batchBtn" class="btn primary sm" type="button" title="并发抓取每条链接 → AI 按修改条件改写 → 自动导出含图片的 Word（默认去除水印）">📚 并发批量生成 Word</button>
         </div>
-        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「批量生成 Word」会逐条抓取、改写并导出 Word，每条文章都嵌入自己的配图。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会并发抓取、改写并导出 Word（文件名 = 正文前 10 字 + 重复率），每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
 
         <div id="linkArticle" class="hidden">
           <div class="article-meta">
@@ -156,10 +159,10 @@
       </div>
 
       <div class="checks">
-        <label><input type="checkbox" id="optAd" checked> 去除广告与无关信息</label>
-        <label><input type="checkbox" id="optProof" checked> 修正错别字与语法</label>
+        <label><input type="checkbox" id="optAd"> 去除广告与无关信息</label>
+        <label><input type="checkbox" id="optProof"> 修正错别字与语法</label>
         <label><input type="checkbox" id="optHead"> 长文自动分节并加小标题</label>
-        <label><input type="checkbox" id="optFact" checked> 保留事实数据，不编造内容</label>
+        <label><input type="checkbox" id="optFact"> 保留事实数据，不编造内容</label>
       </div>
 
       <label class="field custom-req-field hidden">

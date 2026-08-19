@@ -1,6 +1,6 @@
 /* ================= 智能改写 + 自动判重 + 预览 + 保存 Word（依赖 app.js 的全局函数） =================
  * 规则：最多尝试 3 次；重复度 ≤5% 达标；≥8% 降重重写（最多 3 次后不再尝试）；5%~8% 合格。
- * 完成后：显示含图片的导出预览 + 保存按钮（Android 存 下载/DeepSeek文章助手，网页存浏览器下载目录）。
+ * 完成后：显示含图片的导出预览 + 保存按钮（Android 存 Pictures/文章助手，网页存浏览器下载目录）。
  * 判重 = 全文文本相似度（文皮皮思路，字符 8-gram Jaccard）。
  */
 (function () {
@@ -9,6 +9,7 @@
   window.__smartLoaded = true;
 
   let lastDocx = null;
+  let lastSim = null; // 最近一次智能改写的重复率（用于 Word 文件名）
 
   function buildSmartMessages(original, prevSim) {
     const baseMsgs = buildMessages(original);
@@ -118,7 +119,9 @@
     const wmRatio = (opts && opts.wmRatio) != null
       ? opts.wmRatio
       : Number(document.getElementById('wmRatio').value) / 100;
-    const autoCrop = (typeof autoCropEnabled === 'function') ? autoCropEnabled() : true;
+    const autoCrop = (opts && opts.autoCrop != null)
+      ? !!opts.autoCrop
+      : (typeof autoCropEnabled === 'function') ? autoCropEnabled() : true; // 批量导出可传 opts.autoCrop=true 默认去水印
     for (let i = 0; i < list.length; i++) {
       try {
         let png;
@@ -233,7 +236,7 @@
         const pngImages = await preparePngImages(articleImages || []);
         const blocks = blocksWithImages(lastOriginal, text, pngImages);
         const buffer = buildDocx('生成文章', blocks);
-        const name = docxNameFromText(text, '生成文章');
+        const name = docxNameFromText(text, '生成文章', lastSim);
         await downloadDocx(buffer, name);
         logAuto('💾 已保存：' + name);
       } catch (e) {
@@ -245,7 +248,7 @@
   }
   function updateSaveHint() {
     document.getElementById('saveWordHint').textContent = IS_ANDROID
-      ? '导出后保存到手机「下载 / DeepSeek文章助手」文件夹'
+      ? '导出后保存到手机「Pictures / 文章助手」文件夹'
       : '导出到浏览器下载目录（Ctrl+J 可查看）';
   }
 
@@ -317,12 +320,13 @@
         }
       }
 
-      // 生成预览 + 准备 Word（不自动下载，等用户点保存）
+      // 记录本次重复率（供保存按钮命名），生成预览 + 准备 Word（不自动下载，等用户点保存）
+      lastSim = finalSim;
       setStatus('正在生成导出预览…', 'loading');
       const blocks = blocksWithImages(original, finalText, pngImages);
       renderPreview(blocks);
       const docxBuf = buildDocx('生成文章', blocks);
-      const name = docxNameFromText(finalText, '生成文章');
+      const name = docxNameFromText(finalText, '生成文章', finalSim);
       lastDocx = { buffer: docxBuf, name: name };
       updateSaveHint();
       logAuto('📄 预览已生成：' + blocks.length + ' 个内容块（含图片 ' + pngImages.length + ' 张）。点击「💾 导出 Word 文档」保存。');
@@ -336,7 +340,7 @@
     }
   }
 
-  /* ================= 多链接批量处理：逐条抓取 → 改写 → 导出含图 Word ================= */
+  /* ================= 多链接并发处理：所有链接同时 抓取 → 改写 → 导出含图 Word ================= */
   function parseLinks() {
     const raw = String(document.getElementById('linkUrl').value || '');
     const seen = new Set();
@@ -347,14 +351,16 @@
     }
     return urls;
   }
-  /* 导出文件名：取文章内容（去空白）前 10 个字 */
-  function docxNameFromText(text, fallback) {
+  /* 导出文件名：内容（去空白）前 10 个字 + 重复率（如 xxx_重复率12.3%.docx） */
+  function docxNameFromText(text, fallback, simPct) {
     const t = String(text || '').replace(/\s+/g, '');
     let n = t.slice(0, 10);
     if (!n) n = fallback || '生成文章';
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '生成文章';
-    return n + '.docx';
+    let suffix = '';
+    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
+    return n + suffix + '.docx';
   }
 
   /* 剔除「事实核查表」及其之后的所有内容（导出预览与 Word 共用） */
@@ -391,12 +397,16 @@
     const logEl = document.getElementById('autoLog');
     logEl.classList.remove('hidden');
 
-    logAuto('📚 开始批量处理 ' + urls.length + ' 个链接（按序逐条抓取 → AI 改写 → 导出 Word）');
+    const tBatch = Date.now(); // 并发处理总耗时计时
+    logAuto('📚 开始并发处理 ' + urls.length + ' 个链接（所有链接同时抓取 → AI 改写 → 导出 Word，全流程并行）');
     const ok = [], fail = [];
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
-      setStatus('正在处理第 ' + (i + 1) + '/' + urls.length + ' 篇…', 'loading');
-      logAuto('—— [' + (i + 1) + '/' + urls.length + '] ' + url + ' ——');
+    let seq = 0; // 任务序号（仅日志/命名用）
+
+    async function processOne(url) {
+      const idx = ++seq;
+      const tOne = Date.now(); // 本条耗时计时
+      setStatus('正在同时处理 ' + idx + '/' + urls.length + ' 篇…', 'loading');
+      logAuto('—— [' + idx + '/' + urls.length + '] ' + url + ' ——');
       try {
         const data = await fetchOne(url);
         if (!data) throw new Error('没有获取到内容');
@@ -405,45 +415,51 @@
         const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
         logAuto('✅ 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
 
-        // 图片 → 自动裁切水印 + Word 可嵌入 PNG（每条文章用自己的配图）
+        // 图片 → 自动裁切水印 + Word 可嵌入 PNG（每条文章用自己的配图；批量导出默认去除水印）
         const items = imgs.map((u) => ({ url: u, blobUrl: '' }));
-        const pngImages = await preparePngImages(items, { log: logAuto });
+        const pngImages = await preparePngImages(items, { log: logAuto, autoCrop: true });
 
-        // AI 改写（复用当前全部修改条件 + 图片占位要求）
+        // AI 改写（复用当前全部修改条件 + 图片占位要求）；并行任务各自收集输出，互不干扰
         logAuto('⏳ 调用 AI 改写中（' + (model === 'deepseek-reasoner' ? '思考模型' : '快速模型') + '）…');
         const messages = buildSmartMessages(articleText, null);
-        outputText = '';
-        await streamRewrite({ apiKey, model, messages }, new AbortController().signal);
-        let out = String(outputText || '').trim();
+        const collector = { text: '' };
+        await streamRewrite({ apiKey, model, messages }, new AbortController().signal, collector);
+        let out = String(collector.text || '').trim();
         if (!out) throw new Error('AI 未返回内容');
         const cut = cutFactCheck(out); // 剔除「事实核查表」及之后内容
         if (cut.length < out.length) logAuto('✂ 已剔除「事实核查表」及其后的内容');
         out = cut;
+        const sim = textSimilarity(articleText, out); // 本次重复率
 
-        // 生成并保存 Word（图片按文章中的 [图片] 位置嵌入）
+        // 生成并保存 Word（图片按文章中的 [图片] 位置嵌入；文件名 = 正文前 10 字 + 重复率）
         const blocks = blocksWithImages(articleText, out, pngImages);
-        const docxName = docxNameFromText(out, data.title || ('文章' + (i + 1)));
+        const docxName = docxNameFromText(out, data.title || ('文章' + idx), sim);
         const docxBuf = buildDocx(data.title || '生成文章', blocks);
-        logAuto('📄 保存 Word：' + docxName + '（' + pngImages.length + ' 张图片）…');
+        logAuto('📄 保存 Word：' + docxName + '（重复率 ' + (sim * 100).toFixed(1) + '%，' + pngImages.length + ' 张图片）…');
         await downloadDocx(docxBuf, docxName);
         ok.push({ url, title: data.title, images: pngImages.length });
-        logAuto('💾 已保存：' + docxName);
+        logAuto('💾 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
       } catch (e) {
         fail.push({ url, err: e.message });
-        logAuto('❌ 第 ' + (i + 1) + ' 条失败：' + e.message);
+        logAuto('❌ 第 ' + idx + ' 条失败：' + e.message);
       }
     }
+
+    // 全并发：所有链接同时处理（每条链接内 抓取→图片→改写→导出 全流程并行，互不影响）
+    await Promise.all(urls.map((url) => processOne(url)));
+    const totalMs = Date.now() - tBatch; // 并发处理总耗时
     window.__batchBusy = false;
-    if (btn) { btn.disabled = false; btn.textContent = '📚 批量生成 Word'; }
+    if (btn) { btn.disabled = false; btn.textContent = '📚 并发批量生成 Word'; }
     setStatus(
-      '✅ 批量完成：成功 ' + ok.length + ' 篇，失败 ' + fail.length + ' 篇（共 ' + urls.length + ' 条链接）',
+      '✅ 批量完成：成功 ' + ok.length + ' 篇，失败 ' + fail.length + ' 篇（共 ' + urls.length + ' 条链接），总耗时 ' + formatDuration(totalMs),
       fail.length ? 'error' : ''
     );
+    logAuto('⏱ 总耗时：' + formatDuration(totalMs) + '（成功 ' + ok.length + ' 篇，失败 ' + fail.length + ' 篇）');
     if (fail.length) {
       logAuto('失败明细：');
       fail.forEach((f) => logAuto('  ✗ ' + f.url + ' → ' + f.err));
     } else {
-      logAuto('🎉 全部完成，Word 已导出（Android 在「下载 / DeepSeek文章助手」，网页在浏览器下载目录）。');
+      logAuto('🎉 全部完成，Word 已导出（Android 在「Pictures / 文章助手」，网页在浏览器下载目录）。');
     }
   }
 

@@ -620,7 +620,8 @@ function buildMessages(text) {
 }
 
 /* ================= 流式调用 DeepSeek ================= */
-async function streamRewrite(body, signal) {
+async function streamRewrite(body, signal, out) {
+  // out = {text:''}（可选）：批量并发时传入，增量写入 out.text，不再写全局 outputText / 更新界面
   if (isExpired()) throw new Error('软件已到期，功能已停止使用');
   let res;
   if (DIRECT) {
@@ -714,13 +715,19 @@ async function streamRewrite(body, signal) {
       if (!delta) continue;
       if (delta.reasoning_content) {
         reasoningBuf += delta.reasoning_content;
-        els.reasonText.appendChild(document.createTextNode(delta.reasoning_content));
-        els.reasonBox.classList.remove('hidden');
+        if (!out) {
+          els.reasonText.appendChild(document.createTextNode(delta.reasoning_content));
+          els.reasonBox.classList.remove('hidden');
+        }
       }
       if (delta.content) {
-        outputText += delta.content;
-        els.outResult.appendChild(document.createTextNode(delta.content));
-        updateCounts();
+        if (out) {
+          out.text += delta.content;
+        } else {
+          outputText += delta.content;
+          els.outResult.appendChild(document.createTextNode(delta.content));
+          updateCounts();
+        }
       }
     }
   }
@@ -940,10 +947,10 @@ async function copyOutput() {
 function downloadOutput() {
   if (!outputText) { flash('暂无内容可下载', true); return; }
   const blob = new Blob(['\uFEFF' + outputText], { type: 'text/plain;charset=utf-8' });
-  const name = 'DeepSeek修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
+  const name = '文章助手修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
   if (IS_ANDROID) {
     saveBlobAndroid(blob, name, 'text')
-      .then(() => flash('已保存到 下载/DeepSeek文章助手'))
+      .then(() => flash('已保存到 Pictures/文章助手'))
       .catch((e) => flash('保存失败：' + e.message, true));
     return;
   }
@@ -1231,3 +1238,411 @@ function fetchOne(url) {
       }
       (async () => {
         let data;
+        if (DIRECT) {
+          data = await directFetchArticle(url);
+        } else {
+          const res = await fetch('/api/fetch-article', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+          });
+          const j = await res.json().catch(() => null);
+          if (!res.ok) throw new Error((j && j.error) || '抓取失败（HTTP ' + res.status + '）');
+          data = j;
+        }
+        resolve(data);
+      })().catch((e) => reject(e));
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+window.onNativeFetchArticle = function (cbId, data) {
+  if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
+  // 批量通道：按 cbId 路由到对应 Promise
+  if (cbId && pendingFetches[cbId]) {
+    const h = pendingFetches[cbId];
+    delete pendingFetches[cbId];
+    if (h.timer) clearTimeout(h.timer);
+    let d = data;
+    try { if (typeof d === 'string') d = JSON.parse(d); } catch { /* keep */ }
+    if (!d) { h.reject(new Error('抓取失败：返回数据异常')); return; }
+    if (d.error) { h.reject(new Error('抓取失败：' + d.error)); return; }
+    h.resolve(d);
+    return;
+  }
+  // 单条抓取：原有界面逻辑
+  if (nativeFetchTimer) { clearTimeout(nativeFetchTimer); nativeFetchTimer = null; }
+  els.fetchBtn.disabled = false;
+  els.fetchBtn.textContent = '抓取正文（首条）';
+  let d = data;
+  try { if (typeof d === 'string') d = JSON.parse(d); } catch { /* keep */ }
+  if (!d) { flash('抓取失败：返回数据异常', true); return; }
+  if (d.error) { flash('抓取失败：' + d.error, true); return; }
+  fillArticle(d);
+};
+
+
+/* ================= 判重（仿文皮皮·河图引擎思路：全文文本相似度） =================
+ * 文皮皮原理：找出两篇文章“相同的地方”，相同内容占比即相似度（越大越抄袭）。
+ * 本地实现：字符 8-gram 公共成分 + Jaccard（0~1），×100 即重复度百分比。
+ */
+function makeGrams(text, n) {
+  const k = n || 4;
+  const clean = String(text || '').replace(/\s+/g, '');
+  const s = new Set();
+  if (!clean) return s;
+  if (clean.length <= k) { s.add(clean); return s; }
+  for (let i = 0; i <= clean.length - k; i++) s.add(clean.slice(i, i + k));
+  return s;
+}
+function textSimilarity(a, b) {
+  const A = makeGrams(a), B = makeGrams(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
+  for (const g of small) if (big.has(g)) inter++;
+  return inter / (A.size + B.size - inter); // Jaccard
+}
+
+/* ================= 最小 .docx 生成器（纯 JS，STORE zip，无依赖） ================= */
+const CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function utf8Bytes(s) { return new TextEncoder().encode(s); }
+function makeZipStore(files) {
+  let offset = 0;
+  const locals = [], centrals = [];
+  for (const f of files) {
+    const nb = utf8Bytes(f.name);
+    const crc = crc32(f.data);
+    const lh = new Uint8Array(30);
+    const dv = new DataView(lh.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true);
+    dv.setUint16(6, 0x0800, true);
+    dv.setUint16(8, 0, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, f.data.length, true);
+    dv.setUint32(22, f.data.length, true);
+    dv.setUint16(26, nb.length, true);
+    const ch = new Uint8Array(46);
+    const cd = new DataView(ch.buffer);
+    cd.setUint32(0, 0x02014b50, true);
+    cd.setUint16(4, 20, true);
+    cd.setUint16(6, 20, true);
+    cd.setUint16(8, 0x0800, true);
+    cd.setUint32(12, offset, true);
+    cd.setUint32(16, crc, true);
+    cd.setUint32(20, f.data.length, true);
+    cd.setUint32(24, f.data.length, true);
+    cd.setUint16(28, nb.length, true);
+    cd.setUint32(42, offset, true);
+    locals.push(lh, nb, f.data);
+    centrals.push(ch, nb);
+    offset += 30 + nb.length + f.data.length;
+  }
+  const cdStart = offset;
+  let cdLen = 0;
+  for (const c of centrals) cdLen += c.length;
+  const eocd = new Uint8Array(22);
+  const eo = new DataView(eocd.buffer);
+  eo.setUint32(0, 0x06054b50, true);
+  eo.setUint16(8, files.length, true);
+  eo.setUint16(10, files.length, true);
+  eo.setUint32(12, cdLen, true);
+  eo.setUint32(16, cdStart, true);
+  const total = cdStart + cdLen + 22;
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const part of locals) { out.set(part, p); p += part.length; }
+  for (const part of centrals) { out.set(part, p); p += part.length; }
+  out.set(eocd, p);
+  return out;
+}
+function escXml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+function imageParagraphXml(rid, cx, cy, id) {
+  return '<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">'
+    + '<wp:extent cx="' + cx + '" cy="' + cy + '"/><wp:docPr id="' + id + '" name="Picture ' + id + '"/>'
+    + '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+    + '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="' + id + '" name="image' + id + '.png"/><pic:cNvPicPr/></pic:nvPicPr>'
+    + '<pic:blipFill><a:blip r:embed="' + rid + '"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+    + '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="' + cx + '" cy="' + cy + '"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
+    + '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+}
+function buildDocx(title, blocks) {
+  // blocks: [{type:'h'|'p', text} | {type:'img', data:Uint8Array(png), w, h}]
+  const media = [], rels = [];
+  let imgId = 0;
+  const bodyXml = [];
+  for (const b of blocks) {
+    if (b.type === 'img') {
+      imgId++;
+      const rid = 'rIdImg' + imgId;
+      media.push({ name: 'word/media/image' + imgId + '.png', data: b.data });
+      rels.push('<Relationship Id="' + rid + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image' + imgId + '.png"/>');
+      const w = b.w || 500, h = b.h || 375;
+      const dispW = Math.min(500, w);
+      const dispH = Math.round(h * (dispW / w));
+      bodyXml.push(imageParagraphXml(rid, Math.round(dispW * 9525), Math.round(dispH * 9525), imgId));
+    } else if (b.type === 'h') {
+      bodyXml.push('<w:p><w:pPr><w:spacing w:before="160" w:after="120"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' + escXml(b.text) + '</w:t></w:r></w:p>');
+    } else {
+      bodyXml.push('<w:p><w:r><w:t xml:space="preserve">' + escXml(b.text) + '</w:t></w:r></w:p>');
+    }
+  }
+  const docXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + '<w:body>' + bodyXml.join('')
+    + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
+    + '</w:body></w:document>';
+  const typesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Default Extension="png" ContentType="image/png"/>'
+    + '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+    + '</Types>';
+  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+    + '</Relationships>';
+  const docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + rels.join('') + '</Relationships>';
+  const files = [
+    { name: '[Content_Types].xml', data: utf8Bytes(typesXml) },
+    { name: '_rels/.rels', data: utf8Bytes(rootRels) },
+    { name: 'word/document.xml', data: utf8Bytes(docXml) },
+    { name: 'word/_rels/document.xml.rels', data: utf8Bytes(docRels) },
+  ];
+  for (const m of media) files.push({ name: m.name, data: m.data });
+  return makeZipStore(files);
+}
+
+/* ================= 图片 -> PNG bytes（供 Word 内嵌） ================= */
+function imageToPngBytes(img) {
+  return new Promise((resolve, reject) => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob((b) => {
+        if (!b) { reject(new Error('图片转换失败（可能跨域受限）')); return; }
+        b.arrayBuffer().then((ab) => resolve({ data: new Uint8Array(ab), w: canvas.width, h: canvas.height }))
+          .catch((e) => reject(e));
+      }, 'image/png');
+    } catch (e) { reject(new Error('图片转换失败：' + e.message)); }
+  });
+}
+async function loadImgForDocx(src) {
+  const img = await loadImageWithFallback(src);
+  return imageToPngBytes(img);
+}
+
+/* ================= 图片去水印（本地 canvas 裁切，不上传） ================= */
+let articleImages = []; // { url, status: 'orig'|'done'|'fail', blobUrl }
+
+function loadImageForCanvas(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = url;
+  });
+}
+async function loadImageWithFallback(url) {
+  try {
+    return await loadImageForCanvas(url);
+  } catch {
+    for (const p of PROXIES) {
+      try { return await loadImageForCanvas(p.build(url)); } catch { /* 下一个代理 */ }
+    }
+    throw new Error('图片加载失败（直连与公共代理均失败，可能防盗链）');
+  }
+}
+function cropRect(w, h, pos, ratio) {
+  const r = Math.min(0.5, Math.max(0.02, ratio));
+  const sw = Math.round(w * r), sh = Math.round(h * r);
+  switch (pos) {
+    case 'bottom-left': return { cw: w - sw, ch: h - sh, sx: sw, sy: 0 };
+    case 'top-right': return { cw: w - sw, ch: h - sh, sx: 0, sy: sh };
+    case 'top-left': return { cw: w - sw, ch: h - sh, sx: sw, sy: sh };
+    case 'bottom': return { cw: w, ch: h - sh, sx: 0, sy: 0 };
+    case 'bottom-right':
+    default: return { cw: w - sw, ch: h - sh, sx: 0, sy: 0 };
+  }
+}
+async function cropImageToBlob(url, pos, ratio) {
+  const img = await loadImageWithFallback(url);
+  const w = img.naturalWidth, h = img.naturalHeight;
+  if (!w || !h) throw new Error('图片尺寸无效');
+  const { cw, ch, sx, sy } = cropRect(w, h, pos, ratio);
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+  let blob = null;
+  try {
+    blob = await new Promise((res) => canvas.toBlob(res, 'image/webp', 0.92));
+    if (!blob) blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
+  } catch (e) {
+    throw new Error('canvas 导出被浏览器拦截（跨域保护）：' + e.message);
+  }
+  if (!blob) throw new Error('图片导出失败');
+  return blob;
+}
+
+function statusLabel(s) {
+  return s === 'done' ? '✓ 已去水印' : s === 'fail' ? '✗ 失败' : '原图';
+}
+function setImgSrcWithFallback(img, url) {
+  let tries = 0;
+  img.onerror = () => {
+    tries++;
+    if (tries <= PROXIES.length) img.src = PROXIES[tries - 1].build(url);
+    else { img.alt = '图片加载失败'; img.style.opacity = 0.3; }
+  };
+  img.src = url;
+}
+function renderImgGrid() {
+  els.imgGrid.innerHTML = '';
+  if (!articleImages.length) return;
+  articleImages.forEach((item, i) => {
+    const card = document.createElement('div');
+    card.className = 'img-card';
+    const wrap = document.createElement('div');
+    wrap.className = 'img-wrap';
+    const img = document.createElement('img');
+    img.alt = '图片' + (i + 1);
+    img.loading = 'lazy';
+    setImgSrcWithFallback(img, item.blobUrl || item.url);
+    wrap.appendChild(img);
+    const info = document.createElement('div');
+    info.className = 'img-info';
+    info.innerHTML = '<span class="tag ' + (item.status === 'done' ? 'ok' : item.status === 'fail' ? 'err' : '') + '">' + statusLabel(item.status) + '</span><span>' + (i + 1) + '/' + articleImages.length + '</span>';
+    const acts = document.createElement('div');
+    acts.className = 'img-actions';
+    const bCrop = document.createElement('button');
+    bCrop.className = 'btn sm'; bCrop.type = 'button'; bCrop.textContent = '✂ 去水印';
+    bCrop.onclick = () => processOne(i);
+    const bDl = document.createElement('button');
+    bDl.className = 'btn sm'; bDl.type = 'button'; bDl.textContent = '下载';
+    bDl.onclick = () => downloadOne(i);
+    const bView = document.createElement('button');
+    bView.className = 'btn ghost sm'; bView.type = 'button'; bView.textContent = '原图';
+    bView.onclick = () => window.open(item.url, '_blank');
+    acts.appendChild(bCrop); acts.appendChild(bDl); acts.appendChild(bView);
+    card.appendChild(wrap); card.appendChild(info); card.appendChild(acts);
+    els.imgGrid.appendChild(card);
+  });
+  els.cropAllBtn.textContent = '✂ 一键去水印（' + articleImages.length + ' 张）';
+}
+async function processOne(i) {
+  const item = articleImages[i];
+  if (!item || item.status === 'processing') return;
+  item.status = 'processing';
+  renderImgGrid();
+  try {
+    const blob = await cropImageToBlob(item.url, els.wmPos.value, Number(els.wmRatio.value) / 100);
+    if (item.blobUrl) URL.revokeObjectURL(item.blobUrl);
+    item.blobUrl = URL.createObjectURL(blob);
+    item.status = 'done';
+  } catch (e) {
+    item.status = 'fail';
+    item.err = e.message;
+    flash('第 ' + (i + 1) + ' 张图片处理失败：' + e.message, true);
+  }
+  renderImgGrid();
+}
+async function processAll() {
+  for (let i = 0; i < articleImages.length; i++) {
+    if (articleImages[i].status === 'done') continue;
+    await processOne(i);
+  }
+  const done = articleImages.filter((x) => x.status === 'done').length;
+  flash('处理完成：' + done + '/' + articleImages.length + ' 张已去水印');
+}
+function downloadOne(i) {
+  const item = articleImages[i];
+  if (!item || !item.blobUrl) { flash(item && item.status === 'fail' ? '该图片处理失败，无法下载' : '请先对该图片执行去水印', true); return; }
+  if (IS_ANDROID) {
+    fetch(item.blobUrl)
+      .then((r) => r.blob())
+      .then((b) => saveBlobAndroid(b, '去水印图片_' + (i + 1) + '.webp', 'image'))
+      .then(() => flash('已保存到相册 /文章助手'))
+      .catch((e) => flash('保存失败：' + e.message, true));
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = item.blobUrl;
+  a.download = '去水印图片_' + (i + 1) + (item.blobUrl.startsWith('blob:') ? '.webp' : '.jpg');
+  a.click();
+}
+function downloadAll() {
+  const dones = articleImages.map((x, i) => ({ x, i })).filter((o) => o.x.status === 'done');
+  if (!dones.length) { flash('请先执行「一键去水印」', true); return; }
+  if (IS_ANDROID) {
+    let count = 0;
+    dones.forEach((o) => {
+      fetch(o.x.blobUrl)
+        .then((r) => r.blob())
+        .then((b) => saveBlobAndroid(b, '去水印图片_' + (o.i + 1) + '.webp', 'image'))
+        .then(() => { count++; if (count === dones.length) flash('已保存 ' + count + ' 张到相册'); })
+        .catch(() => { count++; });
+    });
+    return;
+  }
+  dones.forEach((o, k) => setTimeout(() => {
+    const a = document.createElement('a');
+    a.href = o.x.blobUrl;
+    a.download = '去水印图片_' + (k + 1) + '.webp';
+    a.click();
+  }, k * 400));
+}
+
+/* ================= 图片相关事件 ================= */
+els.wmRatio.addEventListener('input', () => {
+  els.wmRatioVal.textContent = els.wmRatio.value + '%';
+});
+/* 自动去水印开关（默认开启，存本地） */
+function autoCropEnabled() {
+  return !els.autoCropChk || els.autoCropChk.checked;
+}
+els.autoCropChk.addEventListener('change', () => {
+  storeSet('dsw_autocrop', els.autoCropChk.checked ? '1' : '0');
+  flash(els.autoCropChk.checked ? '自动去水印已开启' : '自动去水印已关闭');
+});
+{
+  const v = storeGet('dsw_autocrop');
+  els.autoCropChk.checked = v === null ? true : v === '1';
+}
+els.cropAllBtn.addEventListener('click', processAll);
+els.downloadAllBtn.addEventListener('click', downloadAll);
+els.useTextBtn.addEventListener('click', () => {
+  const t = els.linkResult.value.trim();
+  if (!t) { flash('链接页暂无正文，请先抓取', true); return; }
+  els.inputText.value = t;
+  switchTab('paste');
+  updateCounts();
+  flash('文章文本已填入「粘贴文本」，可设置修改条件后开始修改');
+});

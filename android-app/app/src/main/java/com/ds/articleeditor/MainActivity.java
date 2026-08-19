@@ -36,7 +36,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * DeepSeek 文章修改助手 - Android 壳
+ * 文章助手 - Android 壳
  *
  * 以 WebView 加载本地网页（assets/index.html）。
  * 关键设置：setAllowUniversalAccessFromFileURLs(true)
@@ -664,32 +664,34 @@ public class MainActivity extends Activity {
                         cv.put(MediaStore.Images.Media.DISPLAY_NAME, safeName);
                         cv.put(MediaStore.Images.Media.MIME_TYPE, mime);
                         cv.put(MediaStore.Images.Media.RELATIVE_PATH,
-                                Environment.DIRECTORY_PICTURES + "/DeepSeek文章助手");
+                                Environment.DIRECTORY_PICTURES + "/文章助手");
                         Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
                         if (uri == null) { toast("保存失败"); return; }
                         try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                             os.write(data);
                         }
-                        toast("已保存到相册 /DeepSeek文章助手");
+                        toast("已保存到相册 /文章助手");
                     } else {
+                        // Word/txt 文档默认导出到 Pictures/文章助手
                         ContentValues cv = new ContentValues();
-                        cv.put(MediaStore.Downloads.DISPLAY_NAME, safeName);
-                        cv.put(MediaStore.Downloads.MIME_TYPE, mime);
-                        cv.put(MediaStore.Downloads.RELATIVE_PATH,
-                                Environment.DIRECTORY_DOWNLOADS + "/DeepSeek文章助手");
-                        Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                        cv.put(MediaStore.Files.FileColumns.DISPLAY_NAME, safeName);
+                        cv.put(MediaStore.Files.FileColumns.MIME_TYPE, mime);
+                        cv.put(MediaStore.Files.FileColumns.RELATIVE_PATH,
+                                Environment.DIRECTORY_PICTURES + "/文章助手");
+                        Uri uri = getContentResolver().insert(
+                                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv);
                         if (uri == null) { toast("保存失败"); return; }
                         try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                             os.write(data);
                         }
-                        toast("已保存到 下载/DeepSeek文章助手");
+                        toast("已保存到 Pictures/文章助手");
                     }
                 } else {
                     // Android 9 及以下：直接写公共目录（需要 WRITE_EXTERNAL_STORAGE）
+                    // Word/txt 文档默认导出到 /sdcard/Pictures/文章助手
                     File dir = new File(
-                            Environment.getExternalStoragePublicDirectory(
-                                    isImage ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_DOWNLOADS),
-                            "DeepSeek文章助手");
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                            "文章助手");
                     if (!dir.exists() && !dir.mkdirs()) { toast("保存失败：无法创建目录"); return; }
                     File f = new File(dir, safeName);
                     try (FileOutputStream fos = new FileOutputStream(f)) {

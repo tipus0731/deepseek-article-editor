@@ -2,7 +2,7 @@
   "name": "deepseek-article-editor",
   "version": "1.0.0",
   "private": true,
-  "description": "DeepSeek 文章修改助手：粘贴文本或导入链接，按预设规则（禁止词/风格/篇幅等）调用 DeepSeek API 改写文章",
+  "description": "文章助手：粘贴文本或导入链接，按预设规则（禁止词/风格/篇幅等）调用 DeepSeek API 改写文章",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
