@@ -3,8 +3,10 @@ package com.ds.articleeditor;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.Manifest;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -104,6 +106,12 @@ public class MainActivity extends Activity {
         }
 
         webView.addJavascriptInterface(new Bridge(), "AndroidBridge");
+        // Android 9 及以下写入公共 Pictures 目录（雷电模拟器共享文件夹）需要运行时存储权限
+        if (Build.VERSION.SDK_INT <= 28) {
+            if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1001);
+            }
+        }
         webView.loadUrl("file:///android_asset/index.html");
     }
 
@@ -785,22 +793,37 @@ public class MainActivity extends Activity {
                         toast("已保存到相册 /文章助手");
                     } else {
                         // Word/txt 文档默认导出到 /storage/emulated/0/Pictures 根目录
-                        ContentValues cv = new ContentValues();
-                        cv.put(MediaStore.Files.FileColumns.DISPLAY_NAME, safeName);
-                        cv.put(MediaStore.Files.FileColumns.MIME_TYPE, mime);
-                        cv.put(MediaStore.Files.FileColumns.RELATIVE_PATH,
-                                Environment.DIRECTORY_PICTURES); // 直接存 Pictures 根目录
-                        Uri uri = getContentResolver().insert(
-                                MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv);
-                        if (uri == null) { toast("保存失败"); return; }
-                        try (OutputStream os = getContentResolver().openOutputStream(uri)) {
-                            os.write(data);
+                        // （雷电模拟器等设备该目录即“共享文件夹”）
+                        try {
+                            ContentValues cv = new ContentValues();
+                            cv.put(MediaStore.Files.FileColumns.DISPLAY_NAME, safeName);
+                            cv.put(MediaStore.Files.FileColumns.MIME_TYPE, mime);
+                            cv.put(MediaStore.Files.FileColumns.RELATIVE_PATH,
+                                    Environment.DIRECTORY_PICTURES); // 直接存 Pictures 根目录
+                            Uri uri = getContentResolver().insert(
+                                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv);
+                            if (uri != null) {
+                                try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                                    os.write(data);
+                                }
+                                toast("已保存到 Pictures（/storage/emulated/0/Pictures）");
+                                return;
+                            }
+                        } catch (Exception ignored) { }
+                        // MediaStore 拒绝时兜底：直接写公共 Pictures 目录
+                        if (writePicturesLegacy(data, safeName)) {
+                            toast("已保存到 Pictures（/storage/emulated/0/Pictures）");
+                        } else {
+                            toast("保存失败：无法写入 Pictures，请检查存储权限");
                         }
-                        toast("已保存到 Pictures（/storage/emulated/0/Pictures）");
                     }
                 } else {
-                    // Android 9 及以下：直接写公共目录（需要 WRITE_EXTERNAL_STORAGE）
-                    // Word/txt 文档默认导出到 /sdcard/Pictures 根目录
+                    // Android 9 及以下：直接写公共 Pictures 目录（雷电模拟器共享文件夹）
+                    if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1001);
+                        toast("保存失败：需要存储权限，请在弹出的授权窗口中允许");
+                        return;
+                    }
                     File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
                     if (!dir.exists() && !dir.mkdirs()) { toast("保存失败：无法创建目录"); return; }
                     File f = new File(dir, safeName);
@@ -809,8 +832,25 @@ public class MainActivity extends Activity {
                     }
                     toast("已保存到 " + f.getAbsolutePath());
                 }
+            } catch (SecurityException e) {
+                toast("保存失败：无存储权限（请在系统设置中允许存储权限后重试）");
             } catch (Exception e) {
                 toast("保存失败：" + e.getMessage());
+            }
+        }
+
+        /** 兜底写入 /storage/emulated/0/Pictures（MediaStore 拒绝时使用；API29+ 无 Legacy 权限会失败） */
+        private boolean writePicturesLegacy(byte[] data, String name) {
+            try {
+                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+                if (!dir.exists() && !dir.mkdirs()) return false;
+                File f = new File(dir, name);
+                try (FileOutputStream fos = new FileOutputStream(f)) {
+                    fos.write(data);
+                }
+                return true;
+            } catch (Exception e) {
+                return false;
             }
         }
 
