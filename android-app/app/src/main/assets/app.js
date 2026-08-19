@@ -950,7 +950,7 @@ function downloadOutput() {
   const name = '文章助手修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
   if (IS_ANDROID) {
     saveBlobAndroid(blob, name, 'text')
-      .then(() => flash('已保存到 Pictures/文章助手'))
+      .then(() => flash('已保存到 Pictures（/storage/emulated/0/Pictures）'))
       .catch((e) => flash('保存失败：' + e.message, true));
     return;
   }

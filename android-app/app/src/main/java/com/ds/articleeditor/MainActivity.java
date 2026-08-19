@@ -28,6 +28,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.LinkedHashSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -218,6 +220,116 @@ public class MainActivity extends Activity {
                     webView.evaluateJavascript(js, null);
                 }
             });
+        }
+
+        /* ---- 原生并行 AI 改写（Java 线程池） ----
+         * 批量并发时 JS 一次性提交全部改写任务；每个任务在独立线程调用 DeepSeek /
+         * 自定义 OpenAI 兼容接口（非流式，同步返回全文），不受 WebView 同域连接数限制。 */
+        private static final int MAX_AI_THREADS = 10;
+
+        @JavascriptInterface
+        public void batchAiRewrite(final String tasksJson, final String cbId) {
+            try {
+                final JSONArray tasks = new JSONArray(tasksJson == null ? "[]" : tasksJson);
+                final int n = tasks.length();
+                if (n == 0) { jsAiCallback(cbId, "", "{\"ok\":false,\"error\":\"无任务\"}"); return; }
+                final ExecutorService pool = Executors.newFixedThreadPool(Math.min(n, MAX_AI_THREADS));
+                for (int k = 0; k < n; k++) {
+                    final int idx = k;
+                    final JSONObject task = tasks.getJSONObject(idx);
+                    pool.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            final String taskId = task.optString("id", String.valueOf(idx));
+                            try {
+                                String apiKey = task.optString("apiKey", "").trim();
+                                if (apiKey.isEmpty()) throw new Exception("未提供 API Key");
+                                String apiBase = task.optString("apiBase", "").trim();
+                                if (apiBase.isEmpty()) apiBase = "https://api.deepseek.com";
+                                if (!apiBase.startsWith("http")) throw new Exception("API 地址格式无效");
+                                String model = task.optString("model", "deepseek-chat");
+                                JSONObject payload = new JSONObject();
+                                payload.put("model", model);
+                                payload.put("messages", task.getJSONArray("messages"));
+                                payload.put("stream", false);
+                                payload.put("temperature", 1.0);
+                                if ("deepseek-chat".equals(model)) payload.put("max_tokens", 8192);
+                                String effort = task.optString("reasoningEffort", "");
+                                if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
+
+                                String body = httpPostJson(apiBase + "/chat/completions", payload, apiKey);
+                                JSONObject j = new JSONObject(body);
+                                String content = "";
+                                JSONArray choices = j.optJSONArray("choices");
+                                if (choices != null && choices.length() > 0) {
+                                    JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
+                                    if (msg != null) {
+                                        String c = msg.optString("content", null);
+                                        if (c != null) content = c;
+                                    }
+                                }
+                                jsAiCallback(cbId, taskId, "{\"ok\":true,\"text\":" + JSONObject.quote(content) + "}");
+                            } catch (Exception e) {
+                                jsAiCallback(cbId, taskId, "{\"ok\":false,\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}");
+                            }
+                        }
+                    });
+                }
+                pool.shutdown();
+            } catch (Exception e) {
+                jsAiCallback(cbId, "", "{\"ok\":false,\"error\":" + JSONObject.quote("任务解析失败：" + e.getMessage()) + "}");
+            }
+        }
+
+        private void jsAiCallback(final String cbId, final String taskId, final String payload) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView == null) return;
+                    String js = "window.onNativeAiResult && window.onNativeAiResult("
+                            + JSONObject.quote(cbId == null ? "" : cbId) + ","
+                            + JSONObject.quote(taskId == null ? "" : taskId) + "," + payload + ")";
+                    webView.evaluateJavascript(js, null);
+                }
+            });
+        }
+
+        /** POST JSON 到 AI 接口（非流式，同步返回响应文本） */
+        private String httpPostJson(String urlStr, JSONObject payload, String apiKey) throws Exception {
+            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(180000);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Accept-Encoding", "gzip");
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            conn.setDoOutput(true);
+            byte[] body = payload.toString().getBytes("UTF-8");
+            try (OutputStream os = conn.getOutputStream()) { os.write(body); }
+            int code = conn.getResponseCode();
+            InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String enc = conn.getContentEncoding();
+            if ("gzip".equalsIgnoreCase(enc) && in != null) in = new GZIPInputStream(in);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            if (in != null) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                in.close();
+            }
+            conn.disconnect();
+            String text = new String(out.toByteArray(), "UTF-8");
+            if (code < 200 || code >= 300) {
+                String msg = text;
+                try {
+                    JSONObject e = new JSONObject(text);
+                    if (e.optJSONObject("error") != null) msg = e.getJSONObject("error").optString("message", text);
+                } catch (Exception ignore) { }
+                throw new Exception("HTTP " + code + "：" + (msg.length() > 300 ? msg.substring(0, 300) : msg));
+            }
+            return text;
         }
 
         /** 核心：用 HttpURLConnection 抓取并解析文章，返回 JSON */
@@ -672,26 +784,24 @@ public class MainActivity extends Activity {
                         }
                         toast("已保存到相册 /文章助手");
                     } else {
-                        // Word/txt 文档默认导出到 Pictures/文章助手
+                        // Word/txt 文档默认导出到 /storage/emulated/0/Pictures 根目录
                         ContentValues cv = new ContentValues();
                         cv.put(MediaStore.Files.FileColumns.DISPLAY_NAME, safeName);
                         cv.put(MediaStore.Files.FileColumns.MIME_TYPE, mime);
                         cv.put(MediaStore.Files.FileColumns.RELATIVE_PATH,
-                                Environment.DIRECTORY_PICTURES + "/文章助手");
+                                Environment.DIRECTORY_PICTURES); // 直接存 Pictures 根目录
                         Uri uri = getContentResolver().insert(
                                 MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv);
                         if (uri == null) { toast("保存失败"); return; }
                         try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                             os.write(data);
                         }
-                        toast("已保存到 Pictures/文章助手");
+                        toast("已保存到 Pictures（/storage/emulated/0/Pictures）");
                     }
                 } else {
                     // Android 9 及以下：直接写公共目录（需要 WRITE_EXTERNAL_STORAGE）
-                    // Word/txt 文档默认导出到 /sdcard/Pictures/文章助手
-                    File dir = new File(
-                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                            "文章助手");
+                    // Word/txt 文档默认导出到 /sdcard/Pictures 根目录
+                    File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
                     if (!dir.exists() && !dir.mkdirs()) { toast("保存失败：无法创建目录"); return; }
                     File f = new File(dir, safeName);
                     try (FileOutputStream fos = new FileOutputStream(f)) {
