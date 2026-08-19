@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.28</span>
+        <span class="badge" title="版本号">v1.29</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -27,8 +27,8 @@
       <button id="toggleKey" type="button" title="显示/隐藏">👁</button>
     </div>
     <select id="model" title="选择模型版本">
-      <option value="deepseek-reasoner">DeepSeek Pro（深度思考）</option>
-      <option value="deepseek-chat">DeepSeek V4 Flash（快速）</option>
+      <option value="deepseek-v4-pro">DeepSeek V4 Pro（深度思考）</option>
+      <option value="deepseek-v4-flash">DeepSeek V4 Flash（快速）</option>
     </select>
   </div>
 </header>
@@ -261,7 +261,7 @@
           <button id="copyBtn" class="btn sm" type="button">复制</button>
           <button id="downloadBtn" class="btn sm" type="button">下载 .txt</button>
           <button id="clearOut" class="btn ghost sm" type="button">清空</button>
-          <button id="smartBtn" class="btn primary sm" type="button" title="AI 自动改写 → 判重（≤5% 达标 / ≥8% 重试，最多 3 次）→ 嵌入原图保存 Word">🪄 智能改写+判重保存 Word</button>
+          <button id="smartBtn" class="btn primary sm" type="button" title="AI 自动改写 → 判重（≤5% 达标 / >5% 自动降重重写，最多 3 次）→ 嵌入原图保存 Word">🪄 智能改写+判重保存 Word</button>
         </div>
       </div>
 
@@ -302,7 +302,7 @@
 
     <div id="reasonBox" class="card hidden">
       <details>
-        <summary>🧠 模型思考过程（deepseek-reasoner）</summary>
+        <summary>🧠 模型思考过程（deepseek-v4-pro）</summary>
         <pre id="reasonText"></pre>
       </details>
     </div>

@@ -260,13 +260,13 @@ public class MainActivity extends Activity {
                                 String apiBase = task.optString("apiBase", "").trim();
                                 if (apiBase.isEmpty()) apiBase = "https://api.deepseek.com";
                                 if (!apiBase.startsWith("http")) throw new Exception("API 地址格式无效");
-                                String model = task.optString("model", "deepseek-chat");
+                                String model = task.optString("model", "deepseek-v4-flash");
                                 JSONObject payload = new JSONObject();
                                 payload.put("model", model);
                                 payload.put("messages", task.getJSONArray("messages"));
                                 payload.put("stream", false);
                                 payload.put("temperature", 1.0);
-                                if ("deepseek-chat".equals(model)) payload.put("max_tokens", 8192);
+                                if ("deepseek-v4-flash".equals(model)) payload.put("max_tokens", 8192);
                                 String effort = task.optString("reasoningEffort", "");
                                 if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
 

@@ -1,5 +1,5 @@
 /* ================= 智能改写 + 自动判重 + 预览 + 保存 Word（依赖 app.js 的全局函数） =================
- * 规则：最多尝试 3 次；重复度 ≤5% 达标；≥8% 降重重写（最多 3 次后不再尝试）；5%~8% 合格。
+ * 规则：最多尝试 3 次；重复度 ≤5% 达标；>5% 自动带降重要要求重写（最多 3 次后不再尝试）。
  * 完成后：显示含图片的导出预览 + 保存按钮（Android Word 存 下载/文章助手，网页存浏览器下载目录）。
  * 判重 = 全文文本相似度（文皮皮思路，字符 8-gram Jaccard）。
  */
@@ -181,13 +181,9 @@
       v.className = 'sim-value ok';
       st.textContent = '✅ 达标（≤5%）';
       st.className = 'sim-status ok';
-    } else if (pct < 8) {
-      v.className = 'sim-value mid';
-      st.textContent = '✅ 合格（5%~8%）';
-      st.className = 'sim-status mid';
     } else {
       v.className = 'sim-value bad';
-      st.textContent = '⚠ 超标（≥8%）' + (attempt >= 3 ? '，不再尝试' : '，将降重重写');
+      st.textContent = '⚠ 超标（>5%）' + (attempt >= 3 ? '，不再尝试' : '，将降重重写');
       st.className = 'sim-status bad';
     }
   }
@@ -309,14 +305,13 @@
         finalText = cutFactCheck(outputText); // 剔除「事实核查表」及之后内容（预览/导出用）
         const pct = (sim * 100).toFixed(1);
         updateSimDisplay(attempt, parseFloat(pct));
-        logAuto('本次重复度：' + pct + '% （目标 ≤5%，重试线 ≥8%）');
+        logAuto('本次重复度：' + pct + '% （目标 ≤5%，>5% 自动降重重写）');
 
         if (sim <= 0.05) { logAuto('✅ 重复度 ' + pct + '% ≤ 5%，达标！'); break; }
-        if (sim < 0.08) { logAuto('✅ 重复度 ' + pct + '%（5%~8% 合格区间）。'); break; }
         if (attempt < 3) {
-          logAuto('⚠ 重复度 ' + pct + '% ≥ 8%，进行下一次降重改写…');
+          logAuto('⚠ 重复度 ' + pct + '% > 5%，进行下一次降重改写…');
         } else {
-          logAuto('⚠ 3 次尝试后重复度仍 ' + pct + '% ≥ 8%，不再尝试，按当前版本生成。');
+          logAuto('⚠ 3 次尝试后重复度仍 ' + pct + '% > 5%，不再尝试，按当前版本生成。');
         }
       }
 
@@ -503,14 +498,14 @@
     });
 
     // ---- 阶段2（全并行）：AI 改写 + 自动判重降重（最多 3 轮；Android 原生 Java 线程池，Web JS 并行流式） ----
-    // 判定标准：≤5% 达标；5%~8% 合格；≥8% 自动带降重要求重写（最多 3 轮后不再尝试）
+    // 判定标准：≤5% 达标；>5% 自动带降重要要求重写（最多 3 轮后不再尝试）
     const aiResults = new Map(); // idx -> { ok, text, sim } | { ok:false, err }
     const ready = articles.filter((a) => a.ok);
-    const cutoff = (sim) => (sim <= 0.05 ? '✅ 达标（≤5%）' : sim < 0.08 ? '✅ 合格（5%~8%）' : '⚠ 超标（≥8%）');
+    const cutoff = (sim) => (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）');
     let pending = ready.slice(); // 当前轮待改写的文章
     for (let attempt = 1; attempt <= 3 && pending.length; attempt++) {
       logAuto('⏳ AI 改写 第 ' + attempt + '/3 轮（' + pending.length + ' 篇，'
-        + (model === 'deepseek-reasoner' ? '思考模型' : '快速模型')
+        + (model === 'deepseek-v4-pro' ? '思考模型' : '快速模型')
         + (nativeAI ? '，原生 Java 多线程' : '，JS 并行') + '）…');
       // 第 1 轮用原始要求；之后的轮次携带上轮重复率自动追加降重要求（buildSmartMessages 内含底层提示词组）
       pending.forEach((a) => { a.messages = buildSmartMessages(a.text, attempt > 1 ? a.lastSim : null); });
@@ -546,8 +541,8 @@
         a.lastSim = sim;
         const pct = (sim * 100).toFixed(1);
         logAuto('[第 ' + a.idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + cutoff(sim)
-          + (sim >= 0.08 && attempt < 3 ? '，继续降重…' : ''));
-        if (sim >= 0.08 && attempt < 3) { next.push(a); return; }
+          + (sim > 0.05 && attempt < 3 ? '，继续降重…' : ''));
+        if (sim > 0.05 && attempt < 3) { next.push(a); return; }
         aiResults.set(a.idx, { ok: true, text: out, sim });
       });
       pending = next;

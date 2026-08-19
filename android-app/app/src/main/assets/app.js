@@ -641,14 +641,14 @@ async function streamRewrite(body, signal, out) {
     const apiBase = (String(els.apiBase.value || '').trim().replace(/\/+$/, '') || API_BASE);
     if (!/^https?:\/\//i.test(apiBase)) throw new Error('API 地址格式无效，需以 http(s):// 开头');
     let model = (String(els.customModel.value || '').trim()) || body.model;
-    // 兜底：深度思考开启且未自定义模型名时，强制使用 Pro（deepseek-reasoner），
-    // 避免任何历史/其它状态把请求错误地发成 V4 Flash（deepseek-chat）。
-    if (!(String(els.customModel.value || '').trim()) && els.thinking && els.thinking.checked && model === 'deepseek-chat') {
-      model = 'deepseek-reasoner';
+    // 兜底：深度思考开启且未自定义模型名时，强制使用 Pro（deepseek-v4-pro），
+    // 避免任何历史/其它状态把请求错误地发成 V4 Flash（deepseek-v4-flash）。
+    if (!(String(els.customModel.value || '').trim()) && els.thinking && els.thinking.checked && model === 'deepseek-v4-flash') {
+      model = 'deepseek-v4-pro';
     }
     const payload = { model: model, messages: body.messages, stream: true, temperature: 1.0 };
-    if (model === 'deepseek-chat') payload.max_tokens = 8192;
-    // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-reasoner 自带思考，不传该参数）
+    if (model === 'deepseek-v4-flash') payload.max_tokens = 8192;
+    // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-v4-pro 自带思考，不传该参数）
     if (els.thinking.checked && !/api\.deepseek\.com$/i.test(apiBase)) {
       const map = { max: 'high', high: 'high', medium: 'medium', low: 'low' };
       const lv = map[els.effort.value] || 'high';
@@ -778,8 +778,8 @@ async function runRewrite() {
   setRunning(true);
   abort = new AbortController();
   const statusPrefix =
-    model === 'deepseek-reasoner'
-      ? (DIRECT ? '正在直连 DeepSeek 官网（deepseek-reasoner 思考较慢）…' : '正在连接 DeepSeek（deepseek-reasoner 思考较慢）…')
+    model === 'deepseek-v4-pro'
+      ? (DIRECT ? '正在直连 DeepSeek 官网（deepseek-v4-pro 思考较慢）…' : '正在连接 DeepSeek（deepseek-v4-pro 思考较慢）…')
       : (DIRECT ? '正在直连 DeepSeek 官网…' : '正在连接 DeepSeek…');
   startTimer(statusPrefix);
 
@@ -1113,7 +1113,7 @@ function loadModelSettings() {
 }
 function syncThinkingUI() {
   // 思考模式开启 → Pro（reasoner）；关闭 → Flash（chat）
-  els.model.value = els.thinking.checked ? 'deepseek-reasoner' : 'deepseek-chat';
+  els.model.value = els.thinking.checked ? 'deepseek-v4-pro' : 'deepseek-v4-flash';
   els.effortField.classList.toggle('hidden', !els.thinking.checked);
 }
 els.thinking.addEventListener('change', () => { syncThinkingUI(); storeSet('dsw_thinking', els.thinking.checked ? '1' : '0'); storeSet('dsw_model', els.model.value); });
