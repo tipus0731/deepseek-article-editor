@@ -1039,13 +1039,20 @@ els.toggleKey.addEventListener('click', () => {
   els.apiKey.type = els.apiKey.type === 'password' ? 'text' : 'password';
 });
 /* ---- 提示词设置（本地存储，升级不丢） ---- */
+// 当前界面正在展示的组 id（内存态）。切换组时，「展示」与「保存」都严格跟随该组，
+// 不依赖「写入 storage 后立即再读取」的时序（兼容 Android 原生 pref 与网页 localStorage）。
+let promptGroupId = null;
 function fillPromptGroup(g) {
   els.sysPrompt.value = (g && g.sys) || ''; // 图片嵌入提示词已移除（固定使用内置默认）
-
   els.dedupPrompt.value = (g && g.dedup) || '';
 }
 function loadPromptSettings() {
   const groups = getPromptGroups();
+  // 修复：若活动组 id 失效（被删/不存在），回退到第一组并与下拉框保持一致
+  const actId = storeGet(PROMPT_ACTIVE_KEY);
+  if (!groups.some((g) => g.id === actId)) {
+    storeSet(PROMPT_ACTIVE_KEY, groups[0].id);
+  }
   const active = getActiveGroup();
   els.promptGroupSel.innerHTML = '';
   groups.forEach((g, i) => {
@@ -1055,17 +1062,20 @@ function loadPromptSettings() {
     els.promptGroupSel.appendChild(o);
   });
   els.promptGroupSel.value = active.id;
+  promptGroupId = active.id;
   fillPromptGroup(active);
 }
 els.promptGroupSel.addEventListener('change', () => {
-  // 切换组前先把当前编辑自动保存到原组，防止丢失
   const groups = getPromptGroups();
-  const prevId = storeGet(PROMPT_ACTIVE_KEY);
-  const prev = groups.find((x) => x.id === prevId) || getActiveGroup();
+  // 1) 先把【当前正在展示的组】的编辑内容保存回它自己的槽位，防止切换丢失
+  const prev = groups.find((x) => x.id === promptGroupId) || groups[0];
   if (prev) { prev.sys = els.sysPrompt.value.trim(); prev.dedup = els.dedupPrompt.value.trim(); }
+  // 2) 再依据下拉框所选组，展示该组已保存的提示词内容
+  const next = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
+  promptGroupId = next.id;
+  storeSet(PROMPT_ACTIVE_KEY, next.id);
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
-  storeSet(PROMPT_ACTIVE_KEY, els.promptGroupSel.value);
-  fillPromptGroup(getActiveGroup());
+  fillPromptGroup(next);
 });
 /* ---- 模型与接口设置（本地存储） ---- */
 function loadModelSettings() {
@@ -1111,6 +1121,7 @@ els.savePromptsBtn.addEventListener('click', () => {
   g.sys = els.sysPrompt.value.trim(); // 图片嵌入提示词已移除，固定使用内置默认（getImgPrompt）
   g.dedup = els.dedupPrompt.value.trim();
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+  promptGroupId = g.id; // 保持内存态与所选组一致
   flash('当前提示词组已保存到本地（升级 APK 不会丢失）');
 });
 els.newGroupBtn.addEventListener('click', () => {
@@ -1140,6 +1151,7 @@ els.resetPromptsBtn.addEventListener('click', () => {
   const g = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
   g.sys = ''; g.dedup = '';
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+  promptGroupId = g.id; // 保持内存态与所选组一致
   els.sysPrompt.value = '';
   els.dedupPrompt.value = '';
   flash('当前组已恢复默认提示词');
