@@ -14,7 +14,7 @@ const els = {
   targetLen: $('targetLen'), audience: $('audience'),
   optAd: $('optAd'), optProof: $('optProof'), optHead: $('optHead'), optFact: $('optFact'),
   customReq: $('customReq'),
-  runBtn: $('runBtn'), stopBtn: $('stopBtn'), status: $('status'),
+  status: $('status'),
   outResult: $('outResult'), outDiff: $('outDiff'), diffBody: $('diffBody'),
   outEmpty: $('outEmpty'), outCount: $('outCount'),
   copyBtn: $('copyBtn'), downloadBtn: $('downloadBtn'), clearOut: $('clearOut'),
@@ -25,7 +25,7 @@ const els = {
   apiBase: $('apiBase'), customModel: $('customModel'),
   saveModelBtn: $('saveModelBtn'), resetModelBtn: $('resetModelBtn'),
   linkArticle: $('linkArticle'), linkTitle: $('linkTitle'), linkSourceTag: $('linkSourceTag'),
-  sysPrompt: $('sysPrompt'), imgPrompt: $('imgPrompt'), dedupPrompt: $('dedupPrompt'),
+  sysPrompt: $('sysPrompt'), dedupPrompt: $('dedupPrompt'),
   savePromptsBtn: $('savePromptsBtn'), resetPromptsBtn: $('resetPromptsBtn'),
   promptGroupSel: $('promptGroupSel'), newGroupBtn: $('newGroupBtn'), delGroupBtn: $('delGroupBtn'),
   useTextBtn: $('useTextBtn'),
@@ -169,8 +169,10 @@ function setStatus(text, cls) {
 }
 function setRunning(v) {
   running = v;
-  els.runBtn.classList.toggle('hidden', v);
-  els.stopBtn.classList.toggle('hidden', !v);
+  if (els.runBtn && els.stopBtn) {
+    els.runBtn.classList.toggle('hidden', v);
+    els.stopBtn.classList.toggle('hidden', !v);
+  }
 }
 function formatDuration(ms) {
   const s = ms / 1000;
@@ -1014,11 +1016,6 @@ els.wordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.pr
 els.loadPreset.addEventListener('click', () => { saveWords([...PRESET_WORDS]); renderWords(); flash('已载入示例禁止词'); });
 els.clearWords.addEventListener('click', () => { saveWords([]); renderWords(); });
 
-els.runBtn.addEventListener('click', runRewrite);
-els.stopBtn.addEventListener('click', () => { if (abort) abort.abort(); });
-document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !running) runRewrite();
-});
 
 segBtns.forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
 els.copyBtn.addEventListener('click', copyOutput);
@@ -1035,8 +1032,8 @@ els.toggleKey.addEventListener('click', () => {
 });
 /* ---- 提示词设置（本地存储，升级不丢） ---- */
 function fillPromptGroup(g) {
-  els.sysPrompt.value = (g && g.sys) || '';
-  els.imgPrompt.value = (g && g.img) || '';
+  els.sysPrompt.value = (g && g.sys) || ''; // 图片嵌入提示词已移除（固定使用内置默认）
+
   els.dedupPrompt.value = (g && g.dedup) || '';
 }
 function loadPromptSettings() {
@@ -1053,6 +1050,12 @@ function loadPromptSettings() {
   fillPromptGroup(active);
 }
 els.promptGroupSel.addEventListener('change', () => {
+  // 切换组前先把当前编辑自动保存到原组，防止丢失
+  const groups = getPromptGroups();
+  const prevId = storeGet(PROMPT_ACTIVE_KEY);
+  const prev = groups.find((x) => x.id === prevId) || getActiveGroup();
+  if (prev) { prev.sys = els.sysPrompt.value.trim(); prev.dedup = els.dedupPrompt.value.trim(); }
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
   storeSet(PROMPT_ACTIVE_KEY, els.promptGroupSel.value);
   fillPromptGroup(getActiveGroup());
 });
@@ -1094,8 +1097,7 @@ els.resetModelBtn.addEventListener('click', () => {
 els.savePromptsBtn.addEventListener('click', () => {
   const groups = getPromptGroups();
   const g = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
-  g.sys = els.sysPrompt.value.trim();
-  g.img = els.imgPrompt.value.trim();
+  g.sys = els.sysPrompt.value.trim(); // 图片嵌入提示词已移除，固定使用内置默认（getImgPrompt）
   g.dedup = els.dedupPrompt.value.trim();
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
   flash('当前提示词组已保存到本地（升级 APK 不会丢失）');
@@ -1125,10 +1127,9 @@ els.delGroupBtn.addEventListener('click', () => {
 els.resetPromptsBtn.addEventListener('click', () => {
   const groups = getPromptGroups();
   const g = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
-  g.sys = ''; g.img = ''; g.dedup = '';
+  g.sys = ''; g.dedup = '';
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
   els.sysPrompt.value = '';
-  els.imgPrompt.value = '';
   els.dedupPrompt.value = '';
   flash('当前组已恢复默认提示词');
 });

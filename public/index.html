@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.25</span>
+        <span class="badge" title="版本号">v1.26</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -226,17 +226,13 @@
             <textarea id="sysPrompt" rows="4" placeholder="留空使用内置默认提示词…"></textarea>
           </label>
           <label class="field">
-            <span>图片嵌入提示词</span>
-            <textarea id="imgPrompt" rows="2" placeholder="留空使用默认：保留 [图片] 占位标记…"></textarea>
-          </label>
-          <label class="field">
             <span>降重提示词（{sim} 会被替换为当前重复度百分比）</span>
             <textarea id="dedupPrompt" rows="3" placeholder="留空使用默认降重提示词…"></textarea>
           </label>
           <div class="prompt-actions">
             <button id="savePromptsBtn" class="btn primary sm" type="button">💾 保存当前组</button>
             <button id="resetPromptsBtn" class="btn ghost sm" type="button">恢复默认</button>
-            <span class="prompt-hint">切换组自动加载；修改后点「保存当前组」。所有组存本地（APK 升级不丢失）。</span>
+            <span class="prompt-hint">切换组自动保存当前修改并加载新组；也可点「保存当前组」手动保存。所有组存本地（APK 升级不丢失）。</span>
           </div>
         </div>
       </details>
@@ -290,14 +286,10 @@
         </div>
         <div id="diffBody"></div>
       </div>
-      <div id="outEmpty" class="empty">尚未生成。<br>填写输入与修改条件后，点击下方「开始修改」。</div>
+      <div id="outEmpty" class="empty">尚未生成。<br>填写输入与修改条件后，点击「🪄 智能改写+判重保存 Word」或「📚 并发批量生成 Word」。</div>
       <div class="char-line"><span id="outCount">0 字</span></div>
     </section>
 
-    <div class="action-bar">
-      <button id="runBtn" class="btn primary big" type="button">⚡ 开始修改（Ctrl+Enter）</button>
-      <button id="stopBtn" class="btn danger big hidden" type="button">⏹ 停止</button>
-    </div>
 
     <div id="reasonBox" class="card hidden">
       <details>
