@@ -640,7 +640,12 @@ async function streamRewrite(body, signal, out) {
     if (!apiKey) throw new Error('请先在右上角填写 API Key（sk-...）');
     const apiBase = (String(els.apiBase.value || '').trim().replace(/\/+$/, '') || API_BASE);
     if (!/^https?:\/\//i.test(apiBase)) throw new Error('API 地址格式无效，需以 http(s):// 开头');
-    const model = (String(els.customModel.value || '').trim()) || body.model;
+    let model = (String(els.customModel.value || '').trim()) || body.model;
+    // 兜底：深度思考开启且未自定义模型名时，强制使用 Pro（deepseek-reasoner），
+    // 避免任何历史/其它状态把请求错误地发成 V4 Flash（deepseek-chat）。
+    if (!(String(els.customModel.value || '').trim()) && els.thinking && els.thinking.checked && model === 'deepseek-chat') {
+      model = 'deepseek-reasoner';
+    }
     const payload = { model: model, messages: body.messages, stream: true, temperature: 1.0 };
     if (model === 'deepseek-chat') payload.max_tokens = 8192;
     // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-reasoner 自带思考，不传该参数）
@@ -1094,7 +1099,7 @@ function syncThinkingUI() {
   els.model.value = els.thinking.checked ? 'deepseek-reasoner' : 'deepseek-chat';
   els.effortField.classList.toggle('hidden', !els.thinking.checked);
 }
-els.thinking.addEventListener('change', () => { syncThinkingUI(); storeSet('dsw_thinking', els.thinking.checked ? '1' : '0'); });
+els.thinking.addEventListener('change', () => { syncThinkingUI(); storeSet('dsw_thinking', els.thinking.checked ? '1' : '0'); storeSet('dsw_model', els.model.value); });
 els.effort.addEventListener('change', () => storeSet('dsw_effort', els.effort.value));
 if (els.batchConc) els.batchConc.addEventListener('change', () => storeSet('dsw_batch_conc', els.batchConc.value));
 els.saveModelBtn.addEventListener('click', () => {
@@ -1212,9 +1217,14 @@ els.length.addEventListener('change', () => {
   const savedKey = storeGet('dsw_apikey') || '';
   if (savedKey) els.apiKey.value = savedKey;
 
-  const savedModel = storeGet('dsw_model');
-  if (savedModel && [...els.model.options].some((o) => o.value === savedModel)) els.model.value = savedModel;
-  els.model.addEventListener('change', () => storeSet('dsw_model', els.model.value));
+  // 模型下拉框与「思考模式」开关双向一致（以思考模式为唯一真源，默认开启深度思考）：
+  // 下拉框选 Pro  ⇔ 思考开；选 Flash ⇔ 思考关。保证“选 Pro”就真的调用 deepseek-reasoner。
+  els.model.addEventListener('change', () => {
+    els.thinking.checked = els.model.value === 'deepseek-reasoner';
+    if (els.effortField) els.effortField.classList.toggle('hidden', !els.thinking.checked);
+    storeSet('dsw_model', els.model.value);
+    storeSet('dsw_thinking', els.thinking.checked ? '1' : '0');
+  });
 
   renderWords();
   loadPromptSettings();
