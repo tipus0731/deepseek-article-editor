@@ -149,7 +149,7 @@ git push -u origin main
 ### APK 内网页的差异
 
 - **无 CORS 限制**：WebView 开启 `allowUniversalAccessFromFileURLs`，直连 `api.deepseek.com`、头条图床、公共代理均不受浏览器跨域约束，链接抓取成功率更高
-- **下载变保存**：「下载 .txt / 图片」通过 JS 桥保存到手机 **相册/文章助手**（图片）与 **Pictures** 根目录（Word/txt 文档，Android 10+ 免权限，9 及以下需存储权限）
+- **下载变保存**：「下载 .txt / 图片」通过 JS 桥保存到手机 **相册/文章助手**（图片）与 **下载/文章助手**（Word/txt 文档，Android 10+ 免权限，9 及以下需存储权限）
 - 「原图」在新窗口打开时自动跳转系统浏览器
 - API Key 仍只存在本机（WebView 的 localStorage），不会上传
 

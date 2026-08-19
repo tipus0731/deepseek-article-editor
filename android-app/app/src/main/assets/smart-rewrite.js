@@ -1,6 +1,6 @@
 /* ================= 智能改写 + 自动判重 + 预览 + 保存 Word（依赖 app.js 的全局函数） =================
  * 规则：最多尝试 3 次；重复度 ≤5% 达标；≥8% 降重重写（最多 3 次后不再尝试）；5%~8% 合格。
- * 完成后：显示含图片的导出预览 + 保存按钮（Android Word 存 Pictures 根目录 /storage/emulated/0/Pictures，网页存浏览器下载目录）。
+ * 完成后：显示含图片的导出预览 + 保存按钮（Android Word 存 下载/文章助手，网页存浏览器下载目录）。
  * 判重 = 全文文本相似度（文皮皮思路，字符 8-gram Jaccard）。
  */
 (function () {
@@ -248,7 +248,7 @@
   }
   function updateSaveHint() {
     document.getElementById('saveWordHint').textContent = IS_ANDROID
-      ? '导出后保存到手机「Pictures」文件夹（/storage/emulated/0/Pictures）'
+      ? '导出后保存到手机「下载 / 文章助手」文件夹'
       : '导出到浏览器下载目录（Ctrl+J 可查看）';
   }
 
@@ -537,7 +537,7 @@
       logAuto('失败明细：');
       failList.forEach((f) => logAuto('  ✗ ' + f.url + ' → ' + (f.stage ? '[' + f.stage + '] ' : '') + f.err));
     } else {
-      logAuto('🎉 全部完成，Word 已导出（Android 在「Pictures」目录 /storage/emulated/0/Pictures，网页在浏览器下载目录）。');
+      logAuto('🎉 全部完成，Word 已导出（Android 在「下载 / 文章助手」，网页在浏览器下载目录）。');
     }
   }
 

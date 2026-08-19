@@ -792,39 +792,39 @@ public class MainActivity extends Activity {
                         }
                         toast("已保存到相册 /文章助手");
                     } else {
-                        // Word/txt 文档默认导出到 /storage/emulated/0/Pictures 根目录
-                        // （雷电模拟器等设备该目录即“共享文件夹”）
+                        // Word/txt 文档默认导出到 Download/文章助手（最初始的导出目录）
                         try {
                             ContentValues cv = new ContentValues();
-                            cv.put(MediaStore.Files.FileColumns.DISPLAY_NAME, safeName);
-                            cv.put(MediaStore.Files.FileColumns.MIME_TYPE, mime);
-                            cv.put(MediaStore.Files.FileColumns.RELATIVE_PATH,
-                                    Environment.DIRECTORY_PICTURES); // 直接存 Pictures 根目录
-                            Uri uri = getContentResolver().insert(
-                                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), cv);
+                            cv.put(MediaStore.Downloads.DISPLAY_NAME, safeName);
+                            cv.put(MediaStore.Downloads.MIME_TYPE, mime);
+                            cv.put(MediaStore.Downloads.RELATIVE_PATH,
+                                    Environment.DIRECTORY_DOWNLOADS + "/文章助手");
+                            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
                             if (uri != null) {
                                 try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                                     os.write(data);
                                 }
-                                toast("已保存到 Pictures（/storage/emulated/0/Pictures）");
+                                toast("已保存到 下载/文章助手");
                                 return;
                             }
                         } catch (Exception ignored) { }
-                        // MediaStore 拒绝时兜底：直接写公共 Pictures 目录
-                        if (writePicturesLegacy(data, safeName)) {
-                            toast("已保存到 Pictures（/storage/emulated/0/Pictures）");
+                        // MediaStore 拒绝时兜底：直接写公共 Download 目录
+                        if (writeDownloadsLegacy(data, safeName)) {
+                            toast("已保存到 下载/文章助手");
                         } else {
-                            toast("保存失败：无法写入 Pictures，请检查存储权限");
+                            toast("保存失败：无法写入 Download/文章助手，请检查存储权限");
                         }
                     }
                 } else {
-                    // Android 9 及以下：直接写公共 Pictures 目录（雷电模拟器共享文件夹）
+                    // Android 9 及以下：直接写公共 Download/文章助手（最初始的导出目录）
                     if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                         requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 1001);
                         toast("保存失败：需要存储权限，请在弹出的授权窗口中允许");
                         return;
                     }
-                    File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+                    File dir = new File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                            "文章助手");
                     if (!dir.exists() && !dir.mkdirs()) { toast("保存失败：无法创建目录"); return; }
                     File f = new File(dir, safeName);
                     try (FileOutputStream fos = new FileOutputStream(f)) {
@@ -839,10 +839,12 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** 兜底写入 /storage/emulated/0/Pictures（MediaStore 拒绝时使用；API29+ 无 Legacy 权限会失败） */
-        private boolean writePicturesLegacy(byte[] data, String name) {
+        /** 兜底写入 Download/文章助手（MediaStore 拒绝时使用；API29+ 无 Legacy 权限会失败） */
+        private boolean writeDownloadsLegacy(byte[] data, String name) {
             try {
-                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+                File dir = new File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                        "文章助手");
                 if (!dir.exists() && !dir.mkdirs()) return false;
                 File f = new File(dir, name);
                 try (FileOutputStream fos = new FileOutputStream(f)) {
