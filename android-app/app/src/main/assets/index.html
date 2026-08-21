@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.29</span>
+        <span class="badge" title="版本号">v1.30</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -26,10 +26,11 @@
       <input type="password" id="apiKey" placeholder="DeepSeek API Key (sk-…)" autocomplete="off" spellcheck="false">
       <button id="toggleKey" type="button" title="显示/隐藏">👁</button>
     </div>
-    <select id="model" title="选择模型版本">
+    <select id="model" title="选择模型版本（填写自定义模型名后会自动隐藏）">
       <option value="deepseek-v4-pro">DeepSeek V4 Pro（深度思考）</option>
       <option value="deepseek-v4-flash">DeepSeek V4 Flash（快速）</option>
     </select>
+    <span id="modelBadge" class="badge model-badge hidden" title="已配置自定义模型，右上角 DeepSeek 默认模型选择已隐藏"></span>
   </div>
 </header>
 
@@ -197,7 +198,7 @@
               <option value="low">低</option>
             </select>
           </label>
-          <p class="hint">模型版本在右上角选择：DeepSeek Pro（深度思考） / DeepSeek V4 Flash（快速）；开启思考模式后自动使用 Pro。</p>
+          <p class="hint">模型版本在右上角选择：DeepSeek Pro（深度思考） / DeepSeek V4 Flash（快速）；开启思考模式后自动使用 Pro。一旦在下文填写了<b>自定义模型名</b>，右上角默认 DeepSeek 模型选择会自动隐藏，所有请求将始终使用自定义模型（同时支持自定义 API 地址）。</p>
           <label class="field">
             <span>自定义供应商 API 地址（OpenAI 兼容，留空=DeepSeek 官方）</span>
             <input id="apiBase" type="text" placeholder="https://api.deepseek.com" spellcheck="false">

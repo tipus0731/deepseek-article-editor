@@ -52,6 +52,11 @@ body {
   background: #e6f6ea; color: #1e7e34; border: 1px solid #b7e3c0;
   padding: 5px 10px; border-radius: 999px; font-size: 12px; white-space: nowrap;
 }
+/* 自定义模型配置后替代右上角默认模型选择框的徽标 */
+.model-badge {
+  background: #efe9ff; color: #6a3de8; border: 1px solid #d8c9ff;
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+}
 .key-field { position: relative; }
 .key-field input {
   width: 260px; padding: 8px 34px 8px 12px;

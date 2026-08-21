@@ -3,7 +3,7 @@
 /* ================= 元素引用 ================= */
 const $ = (id) => document.getElementById(id);
 const els = {
-  apiKey: $('apiKey'), toggleKey: $('toggleKey'), model: $('model'),
+  apiKey: $('apiKey'), toggleKey: $('toggleKey'), model: $('model'), modelBadge: $('modelBadge'),
   serverKeyBadge: $('serverKeyBadge'), keyField: $('keyField'),
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
@@ -640,12 +640,8 @@ async function streamRewrite(body, signal, out) {
     if (!apiKey) throw new Error('请先在右上角填写 API Key（sk-...）');
     const apiBase = (String(els.apiBase.value || '').trim().replace(/\/+$/, '') || API_BASE);
     if (!/^https?:\/\//i.test(apiBase)) throw new Error('API 地址格式无效，需以 http(s):// 开头');
-    let model = (String(els.customModel.value || '').trim()) || body.model;
-    // 兜底：深度思考开启且未自定义模型名时，强制使用 Pro（deepseek-v4-pro），
-    // 避免任何历史/其它状态把请求错误地发成 V4 Flash（deepseek-v4-flash）。
-    if (!(String(els.customModel.value || '').trim()) && els.thinking && els.thinking.checked && model === 'deepseek-v4-flash') {
-      model = 'deepseek-v4-pro';
-    }
+    // 已配置自定义模型名 → 使用自定义模型；否则用所选模型（思考开启且未自定义时兜底 Pro）
+    const model = effectiveModel(body.model);
     const payload = { model: model, messages: body.messages, stream: true, temperature: 1.0 };
     if (model === 'deepseek-v4-flash') payload.max_tokens = 8192;
     // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-v4-pro 自带思考，不传该参数）
@@ -674,7 +670,13 @@ async function streamRewrite(body, signal, out) {
     const effort = (els.thinking.checked && /^https?:\/\//i.test(apiBase) && !/api\.deepseek\.com$/i.test(apiBase))
       ? ({ max: 'high', high: 'high', medium: 'medium', low: 'low' }[els.effort.value] || 'high')
       : '';
-    const srvBody = Object.assign({}, body, { apiBase: apiBase || undefined, reasoning_effort: effort || undefined });
+    const srvBody = Object.assign({}, body, {
+      // 关键：自定义模型名必须随请求传给服务端转发，
+      // 否则服务端只会使用 body.model（默认下拉框的 DeepSeek 模型），自定义模型配置将完全失效。
+      model: effectiveModel(body.model),
+      apiBase: apiBase || undefined,
+      reasoning_effort: effort || undefined,
+    });
     try {
       res = await fetch('/api/rewrite', {
         method: 'POST',
@@ -771,16 +773,18 @@ async function runRewrite() {
 
   const apiKey = els.apiKey.value.trim();
   if (apiKey) storeSet('dsw_apikey', apiKey);
-  const model = els.model.value;
+  const model = effectiveModel(els.model.value);
+  const customModel = currentCustomModel();
 
   lastOriginal = text;
   resetOutput();
   setRunning(true);
   abort = new AbortController();
-  const statusPrefix =
-    model === 'deepseek-v4-pro'
-      ? (DIRECT ? '正在直连 DeepSeek 官网（deepseek-v4-pro 思考较慢）…' : '正在连接 DeepSeek（deepseek-v4-pro 思考较慢）…')
-      : (DIRECT ? '正在直连 DeepSeek 官网…' : '正在连接 DeepSeek…');
+  const statusPrefix = customModel
+    ? '正在调用自定义模型（' + customModel + '）…'
+    : (model === 'deepseek-v4-pro'
+        ? (DIRECT ? '正在直连 DeepSeek 官网（deepseek-v4-pro 思考较慢）…' : '正在连接 DeepSeek（deepseek-v4-pro 思考较慢）…')
+        : (DIRECT ? '正在直连 DeepSeek 官网…' : '正在连接 DeepSeek…'));
   startTimer(statusPrefix);
 
   try {
@@ -1099,6 +1103,32 @@ function autosaveCurrentPrompt() {
 els.sysPrompt.addEventListener('input', autosaveCurrentPrompt);
 els.dedupPrompt.addEventListener('input', autosaveCurrentPrompt);
 window.addEventListener('beforeunload', saveCurrentPromptNow);
+/* ---- 自定义模型与默认模型选择框联动 ----
+ * 规则：一旦填写并保存了「自定义模型名」，右上角默认 DeepSeek 模型下拉框即不再生效，
+ * 因此自动隐藏该下拉框并改为展示「当前生效模型」徽标，避免“选了 DeepSeek 却无效”的困惑。
+ */
+function currentCustomModel() {
+  return String((els.customModel && els.customModel.value) || '').trim();
+}
+/* 计算本次请求实际使用的模型：
+ * 已配置自定义模型名 → 用自定义模型（默认 DeepSeek 下拉框失效并隐藏）；
+ * 否则用所选模型；开启思考模式且未自定义模型时兜底用 Pro（deepseek-v4-pro）。 */
+function effectiveModel(fallbackModel) {
+  const custom = currentCustomModel();
+  if (custom) return custom;
+  let m = String(fallbackModel || (els.model && els.model.value) || '').trim() || 'deepseek-v4-pro';
+  if (els.thinking && els.thinking.checked && m === 'deepseek-v4-flash') m = 'deepseek-v4-pro';
+  return m;
+}
+function syncModelUi() {
+  const custom = currentCustomModel();
+  const hasCustom = Boolean(custom);
+  if (els.model) els.model.classList.toggle('hidden', hasCustom);
+  if (els.modelBadge) {
+    els.modelBadge.textContent = hasCustom ? ('模型：' + custom) : '';
+    els.modelBadge.classList.toggle('hidden', !hasCustom);
+  }
+}
 /* ---- 模型与接口设置（本地存储） ---- */
 function loadModelSettings() {
   const t = storeGet('dsw_thinking');
@@ -1110,6 +1140,7 @@ function loadModelSettings() {
   const bc = storeGet('dsw_batch_conc');
   if (bc && els.batchConc && [...els.batchConc.options].some((o) => o.value === bc)) els.batchConc.value = bc;
   syncThinkingUI();
+  syncModelUi();
 }
 function syncThinkingUI() {
   // 思考模式开启 → Pro（deepseek-v4-pro）；关闭 → Flash（deepseek-v4-flash）
@@ -1124,7 +1155,8 @@ els.saveModelBtn.addEventListener('click', () => {
   storeSet('dsw_effort', els.effort.value);
   storeSet('dsw_api_base', els.apiBase.value.trim());
   storeSet('dsw_custom_model', els.customModel.value.trim());
-  flash('模型设置已保存到本地（升级 APK 不丢失）');
+  syncModelUi();
+  flash('模型设置已保存到本地（升级 APK 不丢失）' + (currentCustomModel() ? '，后续请求将使用自定义模型「' + currentCustomModel() + '」' : ''));
 });
 els.resetModelBtn.addEventListener('click', () => {
   storeRemove('dsw_thinking'); storeRemove('dsw_effort');
@@ -1134,8 +1166,11 @@ els.resetModelBtn.addEventListener('click', () => {
   els.apiBase.value = '';
   els.customModel.value = '';
   syncThinkingUI();
+  syncModelUi();
   flash('已恢复默认模型设置');
 });
+/* 输入自定义模型名时即时隐藏默认模型选择框（并显示生效模型徽标） */
+els.customModel.addEventListener('input', syncModelUi);
 
 els.savePromptsBtn.addEventListener('click', () => {
   const groups = getPromptGroups();

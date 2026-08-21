@@ -273,7 +273,8 @@
 
     const apiKey = document.getElementById('apiKey').value.trim();
     if (apiKey) storeSet('dsw_apikey', apiKey);
-    const model = document.getElementById('model').value;
+    // 已配置自定义模型名时优先使用自定义模型（默认 DeepSeek 下拉框自动隐藏）
+    const model = effectiveModel(document.getElementById('model').value);
 
     window.__smartBusy = true;
     document.getElementById('smartBtn').disabled = true;
@@ -443,7 +444,8 @@
     }
     const apiKey = document.getElementById('apiKey').value.trim();
     if (apiKey) storeSet('dsw_apikey', apiKey);
-    const model = document.getElementById('model').value;
+    // 已配置自定义模型名时优先使用自定义模型（默认 DeepSeek 下拉框自动隐藏）
+    const model = effectiveModel(document.getElementById('model').value);
     const apiBase = String((els.apiBase && els.apiBase.value) || '').trim();
     const reasoningEffort = (els.thinking && els.thinking.checked && !/api\.deepseek\.com$/i.test(apiBase))
       ? ({ max: 'high', high: 'high', medium: 'medium', low: 'low' }[els.effort.value] || 'high')
@@ -505,7 +507,7 @@
     let pending = ready.slice(); // 当前轮待改写的文章
     for (let attempt = 1; attempt <= 3 && pending.length; attempt++) {
       logAuto('⏳ AI 改写 第 ' + attempt + '/3 轮（' + pending.length + ' 篇，'
-        + (model === 'deepseek-v4-pro' ? '思考模型' : '快速模型')
+        + (model === 'deepseek-v4-pro' ? '思考模型' : model === 'deepseek-v4-flash' ? '快速模型' : '自定义模型 ' + model)
         + (nativeAI ? '，原生 Java 多线程' : '，JS 并行') + '）…');
       // 第 1 轮用原始要求；之后的轮次携带上轮重复率自动追加降重要求（buildSmartMessages 内含底层提示词组）
       pending.forEach((a) => { a.messages = buildSmartMessages(a.text, attempt > 1 ? a.lastSim : null); });

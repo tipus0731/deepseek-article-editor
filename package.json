@@ -1,6 +1,6 @@
 {
   "name": "deepseek-article-editor",
-  "version": "1.29.0",
+  "version": "1.30.0",
   "private": true,
   "description": "文章助手：粘贴文本或导入链接，按预设规则（禁止词/风格/篇幅等）调用 DeepSeek API 改写文章",
   "main": "server.js",
