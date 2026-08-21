@@ -94,11 +94,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        // 软件试用期限制：2026-08-22 00:00（北京时间）到期后在原生层直接拦截，不加载应用
-        if (System.currentTimeMillis() >= 1787328000000L) {
+        // 软件试用期限制：2026-08-28 00:00（北京时间）到期后在原生层直接拦截，不加载应用
+        if (System.currentTimeMillis() >= 1787846400000L) {
             new AlertDialog.Builder(this)
                     .setTitle("软件已到期")
-                    .setMessage("本软件试用期已于 2026年8月22日 到期，功能已停止使用。\n如需继续使用，请联系开发者授权。")
+                    .setMessage("本软件试用期已于 2026年8月28日 到期，功能已停止使用。\n如需继续使用，请联系开发者授权。")
                     .setPositiveButton("退出", (d, w) -> finish())
                     .setCancelable(false)
                     .show();

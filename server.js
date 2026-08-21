@@ -29,8 +29,8 @@ const DEEPSEEK_BASE = 'https://api.deepseek.com';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const MAX_ARTICLE_CHARS = 30000;
 const MAX_PAGE_BYTES = 8 * 1024 * 1024;
-// 软件试用期限制：2026-08-22 00:00（北京时间）到期后接口全部拒绝（改日期请改下面这一处）
-const EXPIRY_MS = 1787328000000; // 2026-08-21T16:00:00Z
+// 软件试用期限制：2026-08-28 00:00（北京时间）到期后接口全部拒绝（改日期请改下面这一处）
+const EXPIRY_MS = 1787846400000; // 2026-08-27T16:00:00Z
 const isExpiredNow = () => Date.now() >= EXPIRY_MS;
 
 const MIME = {
@@ -471,7 +471,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { hasServerKey: Boolean(SERVER_KEY), expired: isExpiredNow() });
     }
     if (isExpiredNow()) {
-      return sendJson(res, 403, { error: '软件已到期（2026-08-22），功能已停止使用' });
+      return sendJson(res, 403, { error: '软件已到期（2026-08-28），功能已停止使用' });
     }
     if (req.method === 'POST' && pathname === '/api/rewrite') return handleRewrite(req, res);
     if (req.method === 'POST' && pathname === '/api/fetch-article') return handleFetchArticle(req, res);
@@ -486,7 +486,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────────');
-  console.log('  文章助手 v1.30 已启动');
+  console.log('  文章助手 v1.31 已启动');
   console.log('  访问地址: http://' + HOST + ':' + PORT);
   console.log(
     SERVER_KEY

@@ -249,7 +249,7 @@
   }
 
   async function runSmartRewrite() {
-    if (isExpired()) { setStatus('软件已到期（2026-08-22），功能已停止使用', 'error'); return; }
+    if (isExpired()) { setStatus('软件已到期（2026-08-28），功能已停止使用', 'error'); return; }
     if (window.__smartBusy) return;
     const original = getSourceText();
     if (!original) return;
@@ -436,7 +436,7 @@
 
   async function runBatchLinks() {
     if (window.__batchBusy) return;
-    if (isExpired()) { setStatus('软件已到期（2026-08-22），功能已停止使用', 'error'); return; }
+    if (isExpired()) { setStatus('软件已到期（2026-08-28），功能已停止使用', 'error'); return; }
     const urls = parseLinks();
     if (!urls.length) {
       logAuto('⚠ 链接框为空或没有有效的 http(s) 链接，请粘贴链接（每行一个）');
