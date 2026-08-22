@@ -503,7 +503,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────────');
-  console.log('  文章助手 v1.33 已启动');
+  console.log('  文章助手 v1.34 已启动');
   console.log('  访问地址: http://' + HOST + ':' + PORT);
   console.log(
     SERVER_KEY

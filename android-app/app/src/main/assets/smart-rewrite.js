@@ -31,13 +31,39 @@
     return blocks;
   }
 
-  /* 按“原文位置”对齐插入图片（替代原来只在改写文本 [图片] 标记处插图，标记一丢图就全跑末尾的问题）：
-   * 1) 记录每张图在原文中前面相邻的段落（锚点段落序号）；
-   * 2) 在改写文本中用相似度找到与锚点段落最对应的改写段落（找不到→按段落比例映射兜底）；
-   * 3) 图片插到对应改写段之后，保持图片原顺序。 */
+  /* 图片插入（混合算法，修复部分文章图片位置错乱）：
+   * 1) 优先：改写文本中 AI 保留的 [图片]/【图片】 标记处，按顺序插入图片（最准确）；
+   * 2) 图片比标记多（标记丢失/被合并）：剩余图片退回“原文锚点+相似度+比例映射”；
+   * 3) 改写文本完全没有标记：整体走锚点算法。 */
   function blocksWithImages(originalText, rewriteText, images) {
     const imageList = images || [];
     if (!imageList.length) return splitTextBlocks(rewriteText);
+    const rewRaw = String(rewriteText || '');
+
+    const rewParts = rewRaw.split(/(\[图片\]|【图片】)/g);
+    const markerCount = Math.floor((rewParts.length - 1) / 2);
+    if (markerCount > 0) {
+      const blocks = [];
+      let imgIdx = 0;
+      for (let i = 0; i < rewParts.length; i++) {
+        if (i % 2 === 1) {
+          if (imgIdx < imageList.length) blocks.push(imageList[imgIdx++]);
+          continue;
+        }
+        const sub = splitTextBlocks(rewParts[i]);
+        for (const b of sub) blocks.push(b);
+      }
+      const rest = imageList.slice(imgIdx);
+      if (!rest.length) return blocks;
+      return appendByAnchor(blocks, rest, originalText, imgIdx);
+    }
+    return appendByAnchor(splitTextBlocks(rewRaw), imageList, originalText, 0);
+  }
+
+  /* 把剩余图片按“原文锚点→改写段相似度→比例映射”追加到块列表（图片保持原顺序） */
+  function appendByAnchor(blocks, images, originalText, anchorOffset) {
+    const imageList = images || [];
+    if (!imageList.length) return blocks;
     const origBlocks = splitTextBlocks(originalText || '');
 
     // 锚点：每张图在原文中的“前一段落”序号
@@ -52,35 +78,35 @@
       if (!anchors.length) for (let i = 0; i < imageList.length; i++) anchors.push(0);
     }
 
-    const rewBlocks = splitTextBlocks(rewriteText);
     const inserts = imageList.map((img, i) => {
-      let oa = (anchors[i] != null && origBlocks.length) ? Math.min(anchors[i], origBlocks.length - 1) : -1;
+      const ai = i + anchorOffset;
+      let oa = (anchors[ai] != null && origBlocks.length) ? Math.min(anchors[ai], origBlocks.length - 1) : -1;
       let after = -1;
       if (oa >= 0) {
         const oaText = origBlocks[oa].text || '';
         let best = -1, bestSim = 0.12;
-        for (let j = 0; j < rewBlocks.length; j++) {
-          const s = textSimilarity(oaText, rewBlocks[j].text);
+        for (let j = 0; j < blocks.length; j++) {
+          const s = textSimilarity(oaText, blocks[j].text || '');
           if (s > bestSim) { bestSim = s; best = j; }
         }
         if (best >= 0) after = best;
       }
-      if (after < 0 && rewBlocks.length) {
+      if (after < 0 && blocks.length) {
         const ratio = (oa >= 0 && origBlocks.length > 1)
           ? oa / (origBlocks.length - 1)
           : (imageList.length > 1 ? i / (imageList.length - 1) : 0);
-        after = Math.min(rewBlocks.length - 1, Math.max(0, Math.round(ratio * (rewBlocks.length - 1))));
+        after = Math.min(blocks.length - 1, Math.max(0, Math.round(ratio * (blocks.length - 1))));
       }
       return { after, img };
     });
 
-    const blocks = [];
-    rewBlocks.forEach((b, j) => {
-      blocks.push(b);
-      for (const ins of inserts) if (ins.after === j) blocks.push(ins.img);
+    const out = [];
+    blocks.forEach((b, j) => {
+      out.push(b);
+      for (const ins of inserts) if (ins.after === j) out.push(ins.img);
     });
-    for (const ins of inserts) if (ins.after < 0) blocks.push(ins.img);
-    return blocks;
+    for (const ins of inserts) if (ins.after < 0) out.push(ins.img);
+    return out;
   }
 
   /* 单张图片 → Word PNG 块：
@@ -141,14 +167,13 @@
 
   async function downloadDocx(buffer, name) {
     if (IS_ANDROID && window.AndroidBridge && window.AndroidBridge.beginSave) {
-      // 分块传输 base64（每块 12KB，3 的倍数保证 base64 拼接正确），避免大文件单次传参失败
+      // 分块传输 base64：String.fromCharCode.apply 批量转换比逐字符拼接快约百倍；
+      // endSave 在 Java 侧立即返回（解码+写盘在后台线程池并行执行），导出不再串行阻塞
       window.AndroidBridge.beginSave(name, false);
-      const CHUNK = 0x3000;
+      const CHUNK = 0x8000; // 32KB
       for (let i = 0; i < buffer.length; i += CHUNK) {
         const sub = buffer.subarray(i, i + CHUNK);
-        let bin = '';
-        for (let j = 0; j < sub.length; j++) bin += String.fromCharCode(sub[j]);
-        window.AndroidBridge.appendChunk(btoa(bin));
+        window.AndroidBridge.appendChunk(btoa(String.fromCharCode.apply(null, sub)));
       }
       window.AndroidBridge.endSave();
       return;

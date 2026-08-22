@@ -143,6 +143,9 @@ public class MainActivity extends Activity {
         private final StringBuilder pendingB64 = new StringBuilder();
         private String pendingName = null;
         private boolean pendingIsImage = false;
+        /** 导出写盘线程池：endSave 立即返回，解码+MediaStore 写入在后台并行执行，
+         *  批量导出不再被单线程串行写盘拖慢（4 线程避免过度并发写存储） */
+        private final ExecutorService saveExecutor = Executors.newFixedThreadPool(4);
 
         @JavascriptInterface
         public void beginSave(String name, boolean isImage) {
@@ -162,12 +165,23 @@ public class MainActivity extends Activity {
                 toast("保存失败：未初始化");
                 return;
             }
-            String name = pendingName;
-            boolean isImage = pendingIsImage;
-            byte[] data = Base64.decode(pendingB64.toString(), Base64.DEFAULT);
+            final String name = pendingName;
+            final boolean isImage = pendingIsImage;
+            final String b64 = pendingB64.toString();
             pendingB64.setLength(0);
             pendingName = null;
-            saveBytes(data, name, isImage);
+            // 立即返回：解码 + 写盘放到后台线程池并行执行，前端无需等待单文件落盘
+            saveExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        byte[] data = Base64.decode(b64, Base64.DEFAULT);
+                        saveBytes(data, name, isImage);
+                    } catch (Exception e) {
+                        toast("保存失败：" + e.getMessage());
+                    }
+                }
+            });
         }
 
         /**
