@@ -168,9 +168,11 @@
   async function downloadDocx(buffer, name) {
     if (IS_ANDROID && window.AndroidBridge && window.AndroidBridge.beginSave) {
       // 分块传输 base64：String.fromCharCode.apply 批量转换比逐字符拼接快约百倍；
+      // 分块必须为 3 的倍数（0x6000=24576），否则中间块带 "=" 填充，
+      // 拼接后 Android Base64.decode 会报 "bad base64"（v1.34 曾用 32KB 触发此 bug）；
       // endSave 在 Java 侧立即返回（解码+写盘在后台线程池并行执行），导出不再串行阻塞
       window.AndroidBridge.beginSave(name, false);
-      const CHUNK = 0x8000; // 32KB
+      const CHUNK = 0x6000; // 24KB，3 的倍数，保证各块拼接成合法 base64
       for (let i = 0; i < buffer.length; i += CHUNK) {
         const sub = buffer.subarray(i, i + CHUNK);
         window.AndroidBridge.appendChunk(btoa(String.fromCharCode.apply(null, sub)));
