@@ -493,9 +493,11 @@
     const nativeAI = !!(IS_ANDROID && window.AndroidBridge && typeof window.AndroidBridge.batchAiRewrite === 'function');
     const tBatch = Date.now(); // 流水线总耗时计时
     logAuto('📚 开始流水线处理 ' + urls.length + ' 个链接（全局并发上限：' + (concurrency === Infinity ? '不限' : concurrency) + '；每篇由同一并发槽串起 抓取→AI改写(≤5%判重,最多3轮)→导出Word）');
+    logAuto('🚀 已同时开启 ' + (concurrency === Infinity ? '全部' : concurrency) + ' 个并发槽：每篇由独立槽处理，完成后自动领取下一篇，直到全部处理完');
     if (nativeAI) logAuto('🤖 Android：AI 调用走 Java 原生线程池（安全上限 MAX_AI_THREADS=100）');
 
     const usedNames = new Set(); // 本次批量已用文件名（同步段内分配，并发安全）
+    let inFlight = 0; // 当前同时在处理的篇数（并发可视化）
     let doneCount = 0, okCount = 0, failCount = 0;
     const failList = [];
 
@@ -528,8 +530,10 @@
     await mapConcurrent(urls, concurrency, async (url, i) => {
       const idx = i + 1;
       const tOne = Date.now();
-      setStatus('正在同时处理 ' + (doneCount + 1) + '/' + urls.length + ' 篇…', 'loading');
-      logAuto('—— [' + idx + '/' + urls.length + '] ' + url + ' ——');
+      inFlight++;
+      const concLabel = concurrency === Infinity ? '全部' : concurrency;
+      setStatus('⚡ 并发 ' + concLabel + ' 路流水线运行中：进行中 ' + inFlight + ' 篇，已完成 ' + doneCount + '/' + urls.length + ' 篇…', 'loading');
+      logAuto('🚀 [' + idx + '/' + urls.length + '] ' + url + '（当前同时进行 ' + inFlight + ' 篇）');
       try {
         // ① 抓取文章 + 裁切图片
         const data = await fetchOne(url);
@@ -579,8 +583,10 @@
         failList.push({ idx, url, err: e.message });
         logAuto('❌ 第 ' + idx + ' 条失败：' + e.message);
       } finally {
+        inFlight--;
         doneCount++;
-        setStatus('已完成 ' + doneCount + '/' + urls.length + ' 篇（成功 ' + okCount + '，失败 ' + failCount + '）', 'loading');
+        const concLabel2 = concurrency === Infinity ? '全部' : concurrency;
+        setStatus('⚡ 并发 ' + concLabel2 + ' 路流水线：进行中 ' + inFlight + ' 篇，已完成 ' + doneCount + '/' + urls.length + ' 篇（成功 ' + okCount + '，失败 ' + failCount + '）', 'loading');
       }
     });
 
