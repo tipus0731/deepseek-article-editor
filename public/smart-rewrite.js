@@ -38,6 +38,14 @@
   function blocksWithImages(originalText, rewriteText, images) {
     const imageList = images || [];
     if (!imageList.length) return splitTextBlocks(rewriteText);
+    // 插图位置：可在「图片去水印」面板选择按原文段落插入，或全部追加到文章末尾
+    const placement = (typeof imagePlacementMode === 'function') ? imagePlacementMode() : 'paragraph';
+    if (placement === 'end') {
+      const blocks = splitTextBlocks(rewriteText);
+      for (const img of imageList) blocks.push(img);
+      return blocks;
+    }
+
     const rewRaw = String(rewriteText || '');
 
     const rewParts = rewRaw.split(/(\[图片\]|【图片】)/g);
@@ -64,6 +72,7 @@
   function appendByAnchor(blocks, images, originalText, anchorOffset) {
     const imageList = images || [];
     if (!imageList.length) return blocks;
+
     const origBlocks = splitTextBlocks(originalText || '');
 
     // 锚点：每张图在原文中的“前一段落”序号
@@ -385,6 +394,16 @@
     if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
     return n + suffix + '.docx';
   }
+  /* 批量导出：使用链接作为文件名（去掉协议头，非法字符替换为 _，并附加重复率） */
+  function docxNameFromUrl(url, simPct) {
+    let n = String(url || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
+    if (!n) n = '链接文章';
+    if (n.length > 80) n = n.slice(0, 80);
+    let suffix = '';
+    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
+    return n + suffix + '.docx';
+  }
 
   /* 剔除「事实核查表」及其之后的所有内容（导出预览与 Word 共用） */
   function cutFactCheck(text) {
@@ -576,9 +595,12 @@
           if (sim <= 0.05) break;
         }
 
-        // ③ 构建并导出 Word（文件名 = 正文前 10 字 + 重复率；重名自动加序号）
+        // ③ 构建并导出 Word（文件名默认 = 正文前 10 字 + 重复率；勾选链接作为文件名时使用链接 + 重复率；重名自动加序号）
         const blocks = blocksWithImages(articleText, out, pngImages);
-        let docxName = docxNameFromText(out, data.title || ('文章' + idx), sim != null ? sim : 1);
+        const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
+        let docxName = useLinkName
+          ? docxNameFromUrl(url, sim != null ? sim : 1)
+          : docxNameFromText(out, data.title || ('文章' + idx), sim != null ? sim : 1);
         if (usedNames.has(docxName)) {
           const dot = docxName.lastIndexOf('.');
           const ext = dot >= 0 ? docxName.slice(dot) : '';
@@ -589,6 +611,7 @@
         usedNames.add(docxName);
         const docxBuf = buildDocx(data.title || '生成文章', blocks);
         logAuto('📄 [第 ' + idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(1) + '%，' + pngImages.length + ' 张图片）…');
+
         await downloadDocx(docxBuf, docxName);
         logAuto('💾 [第 ' + idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
         okCount++;

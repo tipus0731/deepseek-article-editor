@@ -397,3 +397,70 @@ footer {
 .expiry-title { font-size: 20px; font-weight: 700; margin-bottom: 10px; color: #dc2626; }
 .expiry-box p { margin: 6px 0; color: #333; line-height: 1.6; }
 body.expired-lock .card, body.expired-lock .action-bar { pointer-events: none; opacity: .5; }
+
+/* ============ 新增：批量链接文件名选项 / 修改功能区 ============ */
+#modifyArea {
+  border-left: 4px solid var(--primary);
+  background: linear-gradient(180deg, #ffffff 0%, #f8faff 100%);
+}
+.batch-name-chk {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--muted); cursor: pointer; user-select: none;
+  white-space: nowrap;
+}
+.batch-name-chk input { accent-color: var(--primary); width: 15px; height: 15px; }
+.modify-area-hint { margin: -6px 0 12px; }
+
+/* ============ 移动端深度适配（手机自适应） ============ */
+@media (max-width: 640px) {
+  .topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .brand { width: 100%; }
+  .brand-title h1 { font-size: 17px; }
+  .top-actions { width: 100%; }
+  .key-field { width: 100%; }
+  .key-field input { width: 100%; }
+  .top-actions select { flex: 1 1 140px; min-width: 0; }
+  main {
+    grid-template-columns: 1fr;
+    padding: 0 10px 24px;
+    margin-top: 12px;
+    gap: 12px;
+  }
+  .card { padding: 14px; }
+  .tabs .tab { flex: 1; text-align: center; padding: 8px 8px; }
+  .link-row { flex-direction: column; align-items: stretch; }
+  .link-row .btn,
+  .link-row .batch-conc,
+  .link-row .batch-name-chk {
+    width: 100%;
+    justify-content: center;
+  }
+  .batch-conc { display: flex; }
+  .batch-name-chk { white-space: normal; }
+  .rule-grid { grid-template-columns: 1fr; }
+  .checks { flex-direction: column; gap: 8px; }
+  .checks label { width: 100%; }
+  .img-controls { flex-direction: column; align-items: stretch; }
+  .inline-field { flex-direction: column; align-items: stretch; gap: 4px; }
+  .inline-field select,
+  .inline-field input[type="range"] { width: 100%; }
+  .output-head { flex-direction: column; align-items: stretch; }
+  .seg { width: 100%; }
+  .seg-btn { flex: 1; }
+  .save-row { flex-direction: column; align-items: stretch; }
+  .save-row .btn { width: 100%; }
+  .mini-actions { width: 100%; }
+  .mini-actions .btn { flex: 1; }
+  .img-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .prompt-actions { flex-direction: column; align-items: stretch; }
+  .prompt-actions .btn { width: 100%; }
+  .prompt-group-row { flex-direction: column; align-items: stretch; }
+  .prompt-group-row .prompt-actions { align-self: stretch; }
+  .toast { bottom: 16px; }
+  footer { padding: 14px 12px 24px; }
+}

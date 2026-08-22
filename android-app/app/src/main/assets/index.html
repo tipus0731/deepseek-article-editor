@@ -70,8 +70,11 @@
               <option value="0">不限</option>
             </select>
           </label>
+          <label class="batch-name-chk" title="勾选后，批量导出的 Word 文件名使用对应链接，并把重复率加在后面">
+            <input type="checkbox" id="useLinkNameChk"> 链接作为文件名
+          </label>
         </div>
-        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>开启同数量的流水线（例如 4000 条链接选 10 = 同时处理 10 条，每篇由同一流水线串起 抓取→AI改写(≤5%判重)→导出Word，先完成先出文件，无需等全部抓完；选 不限 = 全部同时处理），文件名 = 正文前 10 字 + 重复率，每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>开启同数量的流水线（例如 4000 条链接选 10 = 同时处理 10 条，每篇由同一流水线串起 抓取→AI改写(≤5%判重)→导出Word，先完成先出文件，无需等全部抓完；选 不限 = 全部同时处理），默认文件名 = 正文前 10 字 + 重复率；勾选「链接作为文件名」后则使用对应链接 + 重复率。每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
 
         <div id="linkArticle" class="hidden">
           <div class="article-meta">
@@ -88,6 +91,12 @@
             <div class="img-controls">
               <label class="checks" style="display:flex;gap:8px;align-items:center;flex:1 1 100%;">
                 <input type="checkbox" id="autoCropChk" checked> 🪄 自动去水印（默认开启：改写 / 导出 Word 时自动裁切水印）
+              </label>
+              <label class="field inline-field"><span>插图位置</span>
+                <select id="imgPos" title="选择导出 Word 时图片的排版方式">
+                  <option value="paragraph">按原文段落插入</option>
+                  <option value="end">全部追加到文章末尾</option>
+                </select>
               </label>
               <label class="field inline-field"><span>水印位置</span>
                 <select id="wmPos">
@@ -115,9 +124,10 @@
       </div>
     </section>
 
-    <!-- ============ 修改条件 ============ -->
-    <section class="card rules-card">
-      <h2>⚙ 修改条件</h2>
+    <!-- ============ 文章修改功能区 ============ -->
+    <section class="card rules-card" id="modifyArea" aria-label="文章修改功能区">
+      <h2>✍️ 文章修改内容</h2>
+      <p class="hint modify-area-hint">以下为可对文章进行修改的规则与条件，单独集中在此区域，便于在手机端快速设置。</p>
 
       <div class="rule-block">
         <div class="rule-head">

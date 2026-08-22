@@ -8,7 +8,7 @@ const els = {
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
   linkUrl: $('linkUrl'), fetchBtn: $('fetchBtn'), linkResult: $('linkResult'),
-  batchConc: $('batchConc'),
+  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'),
   wordChips: $('wordChips'), wordInput: $('wordInput'), addWord: $('addWord'),
   loadPreset: $('loadPreset'), clearWords: $('clearWords'),
   style: $('style'), length: $('length'), targetLenField: $('targetLenField'),
@@ -33,7 +33,7 @@ const els = {
   useTextBtn: $('useTextBtn'),
   imgPanel: $('imgPanel'), imgGrid: $('imgGrid'),
   wmPos: $('wmPos'), wmRatio: $('wmRatio'), wmRatioVal: $('wmRatioVal'),
-  autoCropChk: $('autoCropChk'),
+  imgPos: $('imgPos'), autoCropChk: $('autoCropChk'),
   cropAllBtn: $('cropAllBtn'), downloadAllBtn: $('downloadAllBtn'),
 };
 
@@ -1750,13 +1750,36 @@ els.wmRatio.addEventListener('input', () => {
 function autoCropEnabled() {
   return !els.autoCropChk || els.autoCropChk.checked;
 }
+/* 批量导出：是否使用链接作为 Word 文件名 */
+function useLinkNameEnabled() {
+  return !!(els.useLinkNameChk && els.useLinkNameChk.checked);
+}
+/* 插图位置：paragraph=按原文段落插入 / end=全部追加到文章末尾 */
+function imagePlacementMode() {
+  return (els.imgPos && els.imgPos.value) || 'paragraph';
+}
 els.autoCropChk.addEventListener('change', () => {
   storeSet('dsw_autocrop', els.autoCropChk.checked ? '1' : '0');
   flash(els.autoCropChk.checked ? '自动去水印已开启' : '自动去水印已关闭');
 });
+/* 链接作为文件名 / 插图位置：本地保存 */
+if (els.useLinkNameChk) {
+  els.useLinkNameChk.addEventListener('change', () => {
+    storeSet('dsw_use_link_name', els.useLinkNameChk.checked ? '1' : '0');
+  });
+}
+if (els.imgPos) {
+  els.imgPos.addEventListener('change', () => {
+    storeSet('dsw_img_pos', els.imgPos.value);
+  });
+}
 {
   const v = storeGet('dsw_autocrop');
   els.autoCropChk.checked = v === null ? true : v === '1';
+  const vn = storeGet('dsw_use_link_name');
+  if (els.useLinkNameChk) els.useLinkNameChk.checked = vn === null ? false : vn === '1';
+  const vp = storeGet('dsw_img_pos');
+  if (els.imgPos && (vp === 'paragraph' || vp === 'end')) els.imgPos.value = vp;
 }
 els.cropAllBtn.addEventListener('click', processAll);
 els.downloadAllBtn.addEventListener('click', downloadAll);
