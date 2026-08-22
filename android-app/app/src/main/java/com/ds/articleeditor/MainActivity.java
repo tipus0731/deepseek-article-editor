@@ -245,11 +245,12 @@ public class MainActivity extends Activity {
         }
 
         /* ---- 原生并行 AI 改写（Java 线程池） ----
-         * 批量并发时 JS 一次性提交全部改写任务；每个任务在独立线程调用 DeepSeek /
-         * 自定义 OpenAI 兼容接口（非流式，同步返回全文），不受 WebView 同域连接数限制。
-         * 线程数 = min(任务数, 前端所选并发数, MAX_AI_THREADS)；并发数由页面「并发」下拉框传入
-         * （0 = 不限，此时用 MAX_AI_THREADS 作为安全上限，避免在手机上过度开线程）。 */
+         * 流水线模式下 JS 每篇文章提交一个 AI 任务；每个任务在共享线程池的独立线程
+         * 调用 DeepSeek / 自定义 OpenAI 兼容接口（非流式，同步返回全文），
+         * 不受 WebView 同域连接数限制。全局并行上限 = MAX_AI_THREADS。 */
+        /** 共享 AI 线程池：批量改写与流水线单篇调用共用，避免每次调用重建线程池 */
         private static final int MAX_AI_THREADS = 100;
+        private final ExecutorService aiExecutor = Executors.newFixedThreadPool(MAX_AI_THREADS);
 
         @JavascriptInterface
         public void batchAiRewrite(final String tasksJson, final String cbId) {
@@ -257,55 +258,55 @@ public class MainActivity extends Activity {
                 final JSONArray tasks = new JSONArray(tasksJson == null ? "[]" : tasksJson);
                 final int n = tasks.length();
                 if (n == 0) { jsAiCallback(cbId, "", "{\"ok\":false,\"error\":\"无任务\"}"); return; }
-                int reqConc = n > 0 ? tasks.getJSONObject(0).optInt("concurrency", 0) : 0;
-                int poolSize = Math.max(1, Math.min(n, reqConc > 0 ? reqConc : MAX_AI_THREADS));
-                poolSize = Math.min(poolSize, MAX_AI_THREADS);
-                final ExecutorService pool = Executors.newFixedThreadPool(poolSize);
                 for (int k = 0; k < n; k++) {
                     final int idx = k;
                     final JSONObject task = tasks.getJSONObject(idx);
-                    pool.execute(new Runnable() {
+                    aiExecutor.execute(new Runnable() {
                         @Override
                         public void run() {
                             final String taskId = task.optString("id", String.valueOf(idx));
                             try {
-                                String apiKey = task.optString("apiKey", "").trim();
-                                if (apiKey.isEmpty()) throw new Exception("未提供 API Key");
-                                String apiBase = task.optString("apiBase", "").trim();
-                                if (apiBase.isEmpty()) apiBase = "https://api.deepseek.com";
-                                if (!apiBase.startsWith("http")) throw new Exception("API 地址格式无效");
-                                String model = task.optString("model", "deepseek-v4-flash");
-                                JSONObject payload = new JSONObject();
-                                payload.put("model", model);
-                                payload.put("messages", task.getJSONArray("messages"));
-                                payload.put("stream", false);
-                                payload.put("temperature", 1.0);
-                                if ("deepseek-v4-flash".equals(model)) payload.put("max_tokens", 8192);
-                                String effort = task.optString("reasoningEffort", "");
-                                if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
-
-                                String body = httpPostJson(apiBase + "/chat/completions", payload, apiKey);
-                                JSONObject j = new JSONObject(body);
-                                String content = "";
-                                JSONArray choices = j.optJSONArray("choices");
-                                if (choices != null && choices.length() > 0) {
-                                    JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
-                                    if (msg != null) {
-                                        String c = msg.optString("content", null);
-                                        if (c != null) content = c;
-                                    }
-                                }
-                                jsAiCallback(cbId, taskId, "{\"ok\":true,\"text\":" + JSONObject.quote(content) + "}");
+                                jsAiCallback(cbId, taskId, callAi(task));
                             } catch (Exception e) {
                                 jsAiCallback(cbId, taskId, "{\"ok\":false,\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}");
                             }
                         }
                     });
                 }
-                pool.shutdown();
             } catch (Exception e) {
                 jsAiCallback(cbId, "", "{\"ok\":false,\"error\":" + JSONObject.quote("任务解析失败：" + e.getMessage()) + "}");
             }
+        }
+
+        /** 单篇 AI 调用（在 aiExecutor 线程执行）：组装 payload → 同步请求 → 返回结果 JSON */
+        private String callAi(JSONObject task) throws Exception {
+            String apiKey = task.optString("apiKey", "").trim();
+            if (apiKey.isEmpty()) throw new Exception("未提供 API Key");
+            String apiBase = task.optString("apiBase", "").trim();
+            if (apiBase.isEmpty()) apiBase = "https://api.deepseek.com";
+            if (!apiBase.startsWith("http")) throw new Exception("API 地址格式无效");
+            String model = task.optString("model", "deepseek-v4-flash");
+            JSONObject payload = new JSONObject();
+            payload.put("model", model);
+            payload.put("messages", task.getJSONArray("messages"));
+            payload.put("stream", false);
+            payload.put("temperature", 1.0);
+            if ("deepseek-v4-flash".equals(model)) payload.put("max_tokens", 8192);
+            String effort = task.optString("reasoningEffort", "");
+            if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
+
+            String body = httpPostJson(apiBase + "/chat/completions", payload, apiKey);
+            JSONObject j = new JSONObject(body);
+            String content = "";
+            JSONArray choices = j.optJSONArray("choices");
+            if (choices != null && choices.length() > 0) {
+                JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
+                if (msg != null) {
+                    String c = msg.optString("content", null);
+                    if (c != null) content = c;
+                }
+            }
+            return "{\"ok\":true,\"text\":" + JSONObject.quote(content) + "}";
         }
 
         private void jsAiCallback(final String cbId, final String taskId, final String payload) {

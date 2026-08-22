@@ -476,7 +476,7 @@
       ? ({ max: 'high', high: 'high', medium: 'medium', low: 'low' }[els.effort.value] || 'high')
       : '';
 
-    // 并发数量：10 / 50 / 100 / 500 / 不限（0）；抓取、AI 改写、导出 Word 三个阶段统一受控
+    // 全局并发数：10 / 50 / 100 / 500 / 不限（0）；同一篇文章由同一并发槽从头到尾流水线处理
     const concVal = els.batchConc && els.batchConc.value != null ? String(els.batchConc.value).trim() : '10';
     const concNum = parseInt(concVal, 10);
     const concurrency = (Number.isFinite(concNum) && concNum > 0) ? concNum : Infinity;
@@ -489,108 +489,67 @@
     logEl.classList.remove('hidden');
 
     const nativeAI = !!(IS_ANDROID && window.AndroidBridge && typeof window.AndroidBridge.batchAiRewrite === 'function');
-    const tBatch = Date.now(); // 并发处理总耗时计时
-    logAuto('📚 开始并发处理 ' + urls.length + ' 个链接（并发上限：' + (concurrency === Infinity ? '不限' : concurrency) + '，抓取/AI改写/导出Word 全程受控）');
-    if (nativeAI) logAuto('🤖 已启用「原生 Java 线程池」并行调用 AI 接口（并发上限 ' + (concurrency === Infinity ? '不限' : concurrency) + '，安全上限见 MAX_AI_THREADS）');
+    const tBatch = Date.now(); // 流水线总耗时计时
+    logAuto('📚 开始流水线处理 ' + urls.length + ' 个链接（全局并发上限：' + (concurrency === Infinity ? '不限' : concurrency) + '；每篇由同一并发槽串起 抓取→AI改写(≤5%判重,最多3轮)→导出Word）');
+    if (nativeAI) logAuto('🤖 Android：AI 调用走 Java 原生线程池（安全上限 MAX_AI_THREADS=100）');
 
-    const articles = []; // { idx, url, title, text, pngImages, messages, tOne, ok, err, stage }
+    const usedNames = new Set(); // 本次批量已用文件名（同步段内分配，并发安全）
+    let doneCount = 0, okCount = 0, failCount = 0;
+    const failList = [];
 
-    // ---- 阶段1（并发受限）：抓取文章 + 裁切图片 + 组装 AI 任务 ----
+    /* 单篇 AI 调用（Android 走 Java 线程池单任务，网页走 JS 并发流式） */
+    const aiCall = async (a) => {
+      if (nativeAI) {
+        const r = await nativeAiBatch([{
+          id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
+          concurrency: 1,
+        }]);
+        const one = (r && r[0]);
+        if (one && one.__err) throw new Error(one.__err);
+        return String(one || '').trim();
+      }
+      const collector = { text: '' };
+      await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
+      return String(collector.text || '').trim();
+    };
+
+    // ---- 单篇文章流水线：抓取 → AI 改写(判重降重) → 导出 Word ----
     await mapConcurrent(urls, concurrency, async (url, i) => {
-      const rec = { idx: i + 1, url, tOne: Date.now(), ok: false, err: null };
-      articles.push(rec);
-      setStatus('正在同时处理 ' + rec.idx + '/' + urls.length + ' 篇…', 'loading');
-      logAuto('—— [' + rec.idx + '/' + urls.length + '] ' + url + ' ——');
+      const idx = i + 1;
+      const tOne = Date.now();
+      setStatus('正在同时处理 ' + (doneCount + 1) + '/' + urls.length + ' 篇…', 'loading');
+      logAuto('—— [' + idx + '/' + urls.length + '] ' + url + ' ——');
       try {
+        // ① 抓取文章 + 裁切图片
         const data = await fetchOne(url);
         if (!data) throw new Error('没有获取到内容');
         const articleText = String(data.text || '').trim();
         if (!articleText) throw new Error('抓取到的正文为空');
         const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
-        logAuto('✅ 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
+        logAuto('✅ [第 ' + idx + ' 篇] 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
+        const pngImages = await preparePngImages(imgs.map((u) => ({ url: u, blobUrl: '' })), { log: logAuto, autoCrop: true });
 
-        // 图片 → 自动裁切水印 + Word 可嵌入 PNG（批量导出默认去除水印）
-        const items = imgs.map((u) => ({ url: u, blobUrl: '' }));
-        const pngImages = await preparePngImages(items, { log: logAuto, autoCrop: true });
+        // ② AI 改写 + 自动判重降重（≤5% 达标；>5% 最多 3 轮；3 轮后仍超标也导出）
+        const rec = { idx, messages: buildSmartMessages(articleText, null) };
+        let out = '';
+        let sim = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          rec.messages = buildSmartMessages(articleText, attempt > 1 ? sim : null);
+          out = await aiCall(rec);
+          if (!out) throw new Error('AI 未返回内容');
+          const cut = cutFactCheck(out);
+          if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
+          out = cut;
+          sim = textSimilarity(articleText, out);
+          const pct = (sim * 100).toFixed(1);
+          logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
+            + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : ''));
+          if (sim <= 0.05) break;
+        }
 
-        rec.title = data.title;
-        rec.text = articleText;
-        rec.pngImages = pngImages;
-        rec.messages = buildSmartMessages(articleText, null); // 复用当前全部修改条件 + 图片占位要求
-        rec.ok = true;
-      } catch (e) {
-        rec.err = e.message;
-        logAuto('❌ 第 ' + rec.idx + ' 条抓取/图片失败：' + e.message);
-      }
-    });
-
-    // ---- 阶段2（全并行）：AI 改写 + 自动判重降重（最多 3 轮；Android 原生 Java 线程池，Web JS 并行流式） ----
-    // 判定标准：≤5% 达标；>5% 自动带降重要要求重写（最多 3 轮后不再尝试）
-    const aiResults = new Map(); // idx -> { ok, text, sim } | { ok:false, err }
-    const ready = articles.filter((a) => a.ok);
-    const cutoff = (sim) => (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）');
-    let pending = ready.slice(); // 当前轮待改写的文章
-    for (let attempt = 1; attempt <= 3 && pending.length; attempt++) {
-      logAuto('⏳ AI 改写 第 ' + attempt + '/3 轮（' + pending.length + ' 篇，'
-        + (model === 'deepseek-v4-pro' ? '思考模型' : model === 'deepseek-v4-flash' ? '快速模型' : '自定义模型 ' + model)
-        + (nativeAI ? '，原生 Java 多线程' : '，JS 并行') + '）…');
-      // 第 1 轮用原始要求；之后的轮次携带上轮重复率自动追加降重要求（buildSmartMessages 内含底层提示词组）
-      pending.forEach((a) => { a.messages = buildSmartMessages(a.text, attempt > 1 ? a.lastSim : null); });
-      let round;
-      if (nativeAI) {
-        // 0 = 不限；Java 线程池按该值调度（Android 安全上限见 MainActivity.MAX_AI_THREADS）
-        const texts = await nativeAiBatch(pending.map((a) => ({
-          id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
-          concurrency: concurrency === Infinity ? 0 : concurrency,
-        })));
-        round = texts;
-      } else {
-        round = await mapConcurrent(pending, concurrency, async (a) => {
-          const collector = { text: '' };
-          try {
-            await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
-            return String(collector.text || '').trim();
-          } catch (e) {
-            return { __err: e.message };
-          }
-        });
-      }
-      const next = []; // 还需要降重、进入下一轮的文章
-      round.forEach((r, j) => {
-        const a = pending[j];
-        if (r && r.__err) { aiResults.set(a.idx, { ok: false, err: r.__err }); return; }
-        let out = String(r || '').trim();
-        if (!out) { aiResults.set(a.idx, { ok: false, err: 'AI 未返回内容' }); return; }
-        const cut = cutFactCheck(out); // 剔除「事实核查表」及之后内容
-        if (cut.length < out.length) logAuto('✂ [第 ' + a.idx + ' 篇] 已剔除「事实核查表」及其后的内容');
-        out = cut;
-        const sim = textSimilarity(a.text, out); // 本轮重复率（8-gram Jaccard）
-        a.lastSim = sim;
-        const pct = (sim * 100).toFixed(1);
-        logAuto('[第 ' + a.idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + cutoff(sim)
-          + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : ''));
-        if (sim > 0.05 && attempt < 3) { next.push(a); return; }
-        aiResults.set(a.idx, { ok: true, text: out, sim });
-      });
-      pending = next;
-    }
-    // 兜底：任何漏网文章标记失败（正常情况下不会发生）
-    ready.forEach((a) => { if (!aiResults.has(a.idx)) aiResults.set(a.idx, { ok: false, err: 'AI 改写未完成' }); });
-
-    // ---- 阶段3（并发受限）：构建并导出 Word（文件名 = 正文前 10 字 + 重复率；重名自动加序号） ----
-    const usedNames = new Set(); // 本次批量已用文件名（JS 单线程同步段内分配，并发安全）
-    await mapConcurrent(ready, concurrency, async (a) => {
-      const r = aiResults.get(a.idx);
-      if (!r || !r.ok) { a.ok = false; a.err = (r && r.err) || 'AI 未返回内容'; a.stage = '改写'; return; }
-      try {
-        let out = String(r.text || '').trim();
-        if (!out) throw new Error('AI 未返回内容');
-        // 重复率在阶段2判重时已算好（r.sim），直接复用保证文件名与该次判定一致
-        const sim = r.sim != null ? r.sim : textSimilarity(a.text, out);
-        const blocks = blocksWithImages(a.text, out, a.pngImages || []);
-        let docxName = docxNameFromText(out, a.title || ('文章' + a.idx), sim);
-        // 同名文件自动追加序号（正文开头相同/重复率相同的文章会重名），
-        // 避免 Android MediaStore 同路径同名插入失败导致批量导出大量失败
+        // ③ 构建并导出 Word（文件名 = 正文前 10 字 + 重复率；重名自动加序号）
+        const blocks = blocksWithImages(articleText, out, pngImages);
+        let docxName = docxNameFromText(out, data.title || ('文章' + idx), sim != null ? sim : 1);
         if (usedNames.has(docxName)) {
           const dot = docxName.lastIndexOf('.');
           const ext = dot >= 0 ? docxName.slice(dot) : '';
@@ -599,29 +558,32 @@
           do { seq++; docxName = base + '_' + seq + ext; } while (usedNames.has(docxName));
         }
         usedNames.add(docxName);
-        const docxBuf = buildDocx(a.title || '生成文章', blocks);
-        logAuto('📄 [第 ' + a.idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + (sim * 100).toFixed(1) + '%，' + (a.pngImages || []).length + ' 张图片）…');
+        const docxBuf = buildDocx(data.title || '生成文章', blocks);
+        logAuto('📄 [第 ' + idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(1) + '%，' + pngImages.length + ' 张图片）…');
         await downloadDocx(docxBuf, docxName);
-        logAuto('💾 [第 ' + a.idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - a.tOne) + '）');
+        logAuto('💾 [第 ' + idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
+        okCount++;
       } catch (e) {
-        a.ok = false; a.err = e.message; a.stage = '导出';
-        logAuto('❌ 第 ' + a.idx + ' 条导出失败：' + e.message);
+        failCount++;
+        failList.push({ idx, url, err: e.message });
+        logAuto('❌ 第 ' + idx + ' 条失败：' + e.message);
+      } finally {
+        doneCount++;
+        setStatus('已完成 ' + doneCount + '/' + urls.length + ' 篇（成功 ' + okCount + '，失败 ' + failCount + '）', 'loading');
       }
     });
 
-    const totalMs = Date.now() - tBatch; // 并发处理总耗时
-    const okList = articles.filter((a) => a.ok);
-    const failList = articles.filter((a) => !a.ok);
+    const totalMs = Date.now() - tBatch; // 流水线总耗时
     window.__batchBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = '📚 并发批量生成 Word'; }
     setStatus(
-      '✅ 批量完成：成功 ' + okList.length + ' 篇，失败 ' + failList.length + ' 篇（共 ' + urls.length + ' 条链接），总耗时 ' + formatDuration(totalMs),
-      failList.length ? 'error' : ''
+      '✅ 批量完成：成功 ' + okCount + ' 篇，失败 ' + failCount + ' 篇（共 ' + urls.length + ' 条链接），总耗时 ' + formatDuration(totalMs),
+      failCount ? 'error' : ''
     );
-    logAuto('⏱ 总耗时：' + formatDuration(totalMs) + '（成功 ' + okList.length + ' 篇，失败 ' + failList.length + ' 篇）');
+    logAuto('⏱ 总耗时：' + formatDuration(totalMs) + '（成功 ' + okCount + ' 篇，失败 ' + failCount + ' 篇）');
     if (failList.length) {
       logAuto('失败明细：');
-      failList.forEach((f) => logAuto('  ✗ ' + f.url + ' → ' + (f.stage ? '[' + f.stage + '] ' : '') + f.err));
+      failList.forEach((f) => logAuto('  ✗ ' + f.url + ' → ' + f.err));
     } else {
       logAuto('🎉 全部完成，Word 已导出（Android 在「下载 / 文章助手」，网页在浏览器下载目录）。');
     }
