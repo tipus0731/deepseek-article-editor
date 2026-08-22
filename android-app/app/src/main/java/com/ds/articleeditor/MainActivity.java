@@ -323,10 +323,11 @@ public class MainActivity extends Activity {
         }
 
         /** POST JSON 到 AI 接口（非流式，同步返回响应文本；
-         *  5xx/429/网络抖动自动重试，最多尝试 3 次，指数退避——DeepSeek 官方间歇性 500 很常见 */
+         *  5xx/429/网络抖动自动重试，最多尝试 5 次，指数退避（429 加倍等待）——
+         *  DeepSeek 官方指南：500=服务端内部问题，短等待后重试即可恢复 */
         private String httpPostJson(String urlStr, JSONObject payload, String apiKey) throws Exception {
             Exception lastErr = null;
-            for (int attempt = 1; attempt <= 3; attempt++) {
+            for (int attempt = 1; attempt <= 5; attempt++) {
                 HttpURLConnection conn = null;
                 try {
                     conn = (HttpURLConnection) new URL(urlStr).openConnection();
@@ -354,8 +355,9 @@ public class MainActivity extends Activity {
                     }
                     String text = new String(out.toByteArray(), "UTF-8");
                     if (code < 200 || code >= 300) {
-                        if ((code >= 500 || code == 429) && attempt < 3) {
-                            Thread.sleep(attempt * 1500L); // 上游瞬时故障/限流 → 退避后重试
+                        if ((code >= 500 || code == 429) && attempt < 5) {
+                            long backoff = (code == 429 ? 3000L : 1500L) * attempt; // 限流时等待加倍
+                            Thread.sleep(backoff);
                             lastErr = new Exception("HTTP " + code);
                             continue;
                         }
@@ -369,7 +371,7 @@ public class MainActivity extends Activity {
                     return text;
                 } catch (Exception e) {
                     lastErr = e;
-                    if (attempt < 3) {
+                    if (attempt < 5) {
                         try { Thread.sleep(attempt * 1500L); } catch (InterruptedException ie) { break; }
                         continue;
                     }
@@ -379,7 +381,7 @@ public class MainActivity extends Activity {
                 }
             }
             throw (lastErr != null)
-                    ? new Exception("AI 接口请求失败（已尝试 3 次）：" + lastErr.getMessage())
+                    ? new Exception("AI 接口请求失败（已尝试 5 次，服务端仍 5xx/429）——建议降低并发档位后重试：" + lastErr.getMessage())
                     : new Exception("AI 接口请求失败");
         }
 

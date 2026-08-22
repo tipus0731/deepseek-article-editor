@@ -652,7 +652,7 @@ async function streamRewrite(body, signal, out) {
       const lv = map[els.effort.value] || 'high';
       payload.reasoning_effort = lv;
     }
-    // 5xx/429 与网络抖动自动重试（最多 3 次，指数退避）：DeepSeek 官方间歇性 500 很常见
+    // 5xx/429 与网络抖动自动重试（最多 5 次，指数退避，429 加倍）：DeepSeek 官方 500=服务端内部问题，短等待重试可恢复
     let tries = 0;
     while (true) {
       try {
@@ -667,12 +667,12 @@ async function streamRewrite(body, signal, out) {
         });
       } catch (e) {
         if (e.name === 'AbortError') throw new Error('__ABORT__');
-        if (++tries < 3) { await sleep(1000 * tries); continue; }
+        if (++tries < 5) { await sleep(1000 * tries); continue; }
         throw new Error('无法连接 api.deepseek.com：' + e.message + '。请检查网络；若浏览器拦截跨域（CORS），请改用 node server.js 启动本地服务模式。');
       }
-      if (!res.ok && (res.status >= 500 || res.status === 429) && tries < 3) {
+      if (!res.ok && (res.status >= 500 || res.status === 429) && tries < 5) {
         await res.text().catch(() => '');
-        await sleep(1000 * ++tries);
+        await sleep((res.status === 429 ? 3000 : 1000) * ++tries);
         continue;
       }
       break;
@@ -690,7 +690,7 @@ async function streamRewrite(body, signal, out) {
       apiBase: apiBase || undefined,
       reasoning_effort: effort || undefined,
     });
-    // 服务端透传的 5xx/429 同样自动重试（最多 3 次，指数退避）
+    // 服务端透传的 5xx/429 同样自动重试（最多 5 次，指数退避，429 加倍）
     let tries = 0;
     while (true) {
       try {
@@ -702,12 +702,12 @@ async function streamRewrite(body, signal, out) {
         });
       } catch (e) {
         if (e.name === 'AbortError') throw new Error('__ABORT__');
-        if (++tries < 3) { await sleep(1000 * tries); continue; }
+        if (++tries < 5) { await sleep(1000 * tries); continue; }
         throw new Error('请求失败：' + e.message);
       }
-      if (!res.ok && (res.status >= 500 || res.status === 429) && tries < 3) {
+      if (!res.ok && (res.status >= 500 || res.status === 429) && tries < 5) {
         await res.text().catch(() => '');
-        await sleep(1000 * ++tries);
+        await sleep((res.status === 429 ? 3000 : 1000) * ++tries);
         continue;
       }
       break;

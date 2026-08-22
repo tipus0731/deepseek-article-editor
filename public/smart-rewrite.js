@@ -497,20 +497,29 @@
     let doneCount = 0, okCount = 0, failCount = 0;
     const failList = [];
 
-    /* 单篇 AI 调用（Android 走 Java 线程池单任务，网页走 JS 并发流式） */
+    /* 单篇 AI 调用（Android 走 Java 线程池单任务，网页走 JS 并发流式）；
+       5xx/429 失败后全局冷却 2.5 秒，避免风暴持续冲击上游 */
+    let coolUntil = 0;
     const aiCall = async (a) => {
-      if (nativeAI) {
-        const r = await nativeAiBatch([{
-          id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
-          concurrency: 1,
-        }]);
-        const one = (r && r[0]);
-        if (one && one.__err) throw new Error(one.__err);
-        return String(one || '').trim();
+      const wait = coolUntil - Date.now();
+      if (wait > 0) await sleep(wait);
+      try {
+        if (nativeAI) {
+          const r = await nativeAiBatch([{
+            id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
+            concurrency: 1,
+          }]);
+          const one = (r && r[0]);
+          if (one && one.__err) throw new Error(one.__err);
+          return String(one || '').trim();
+        }
+        const collector = { text: '' };
+        await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
+        return String(collector.text || '').trim();
+      } catch (e) {
+        coolUntil = Date.now() + 2500; // 失败后短暂全局冷却，让上游缓口气
+        throw e;
       }
-      const collector = { text: '' };
-      await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
-      return String(collector.text || '').trim();
     };
 
     // ---- 单篇文章流水线：抓取 → AI 改写(判重降重) → 导出 Word ----

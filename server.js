@@ -247,11 +247,11 @@ async function handleRewrite(req, res) {
   if (model === 'deepseek-v4-flash') payload.max_tokens = 8192; // v4-pro 使用其默认输出上限
   if (effort && /^(low|medium|high)$/.test(effort)) payload.reasoning_effort = effort;
 
-  // 5xx/429/网络错误自动重试（最多 3 次，指数退避），减少上游间歇性故障透传给前端
+  // 5xx/429/网络错误自动重试（最多 5 次，指数退避，429 加倍），减少上游间歇性故障透传给前端
   let upstream = null;
   let upstreamStatus = 0;
   let upstreamText = '';
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
       upstream = await fetch(upstreamBase + '/chat/completions', {
         method: 'POST',
@@ -264,9 +264,9 @@ async function handleRewrite(req, res) {
       });
       upstreamStatus = upstream.status;
       if (upstream.ok) break;
-      if ((upstreamStatus >= 500 || upstreamStatus === 429) && attempt < 3) {
+      if ((upstreamStatus >= 500 || upstreamStatus === 429) && attempt < 5) {
         upstreamText = await upstream.text().catch(() => '');
-        await sleepMs(attempt * 1200);
+        await sleepMs((upstreamStatus === 429 ? 3000 : 1500) * attempt);
         continue;
       }
       break;
@@ -274,7 +274,7 @@ async function handleRewrite(req, res) {
       upstream = null;
       upstreamStatus = 0;
       upstreamText = e.message;
-      if (attempt < 3) { await sleepMs(attempt * 1200); continue; }
+      if (attempt < 5) { await sleepMs(attempt * 1500); continue; }
       break;
     }
   }
@@ -503,7 +503,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────────');
-  console.log('  文章助手 v1.35 已启动');
+  console.log('  文章助手 v1.36 已启动');
   console.log('  访问地址: http://' + HOST + ':' + PORT);
   console.log(
     SERVER_KEY
