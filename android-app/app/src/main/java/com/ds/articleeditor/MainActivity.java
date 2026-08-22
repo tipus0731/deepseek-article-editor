@@ -774,6 +774,24 @@ public class MainActivity extends Activity {
         }
 
 
+        /** MediaStore 插入：同名文件已存在时自动追加序号后缀再试，
+         *  避免批量导出同名（正文开头相同+重复率相同）时插入失败导致大量导出失败 */
+        private Uri insertMediaStoreUnique(ContentValues cv, Uri collection) {
+            Uri uri = getContentResolver().insert(collection, cv);
+            if (uri != null) return uri;
+            String name = cv.getAsString("display_name");
+            if (name == null) return null;
+            int dot = name.lastIndexOf('.');
+            String base = dot >= 0 ? name.substring(0, dot) : name;
+            String ext = dot >= 0 ? name.substring(dot) : "";
+            for (int n = 2; n <= 999; n++) {
+                cv.put("display_name", base + "_" + n + ext);
+                uri = getContentResolver().insert(collection, cv);
+                if (uri != null) return uri;
+            }
+            return null;
+        }
+
         private void saveBytes(byte[] data, String name, boolean isImage) {
             if (data.length == 0) {
                 toast("保存失败：数据为空");
@@ -790,7 +808,7 @@ public class MainActivity extends Activity {
                         cv.put(MediaStore.Images.Media.MIME_TYPE, mime);
                         cv.put(MediaStore.Images.Media.RELATIVE_PATH,
                                 Environment.DIRECTORY_PICTURES + "/文章助手");
-                        Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
+                        Uri uri = insertMediaStoreUnique(cv, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
                         if (uri == null) { toast("保存失败"); return; }
                         try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                             os.write(data);
@@ -804,7 +822,7 @@ public class MainActivity extends Activity {
                             cv.put(MediaStore.Downloads.MIME_TYPE, mime);
                             cv.put(MediaStore.Downloads.RELATIVE_PATH,
                                     Environment.DIRECTORY_DOWNLOADS + "/文章助手");
-                            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                            Uri uri = insertMediaStoreUnique(cv, MediaStore.Downloads.EXTERNAL_CONTENT_URI);
                             if (uri != null) {
                                 try (OutputStream os = getContentResolver().openOutputStream(uri)) {
                                     os.write(data);

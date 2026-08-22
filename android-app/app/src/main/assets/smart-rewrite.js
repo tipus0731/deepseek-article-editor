@@ -312,7 +312,7 @@
         if (attempt < 3) {
           logAuto('⚠ 重复度 ' + pct + '% > 5%，进行下一次降重改写…');
         } else {
-          logAuto('⚠ 3 次尝试后重复度仍 ' + pct + '% > 5%，不再尝试，按当前版本生成。');
+          logAuto('⚠ 3 次尝试后重复度仍 ' + pct + '% > 5%，不再重试，按当前版本预览并保存导出。');
         }
       }
 
@@ -543,7 +543,7 @@
         a.lastSim = sim;
         const pct = (sim * 100).toFixed(1);
         logAuto('[第 ' + a.idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + cutoff(sim)
-          + (sim > 0.05 && attempt < 3 ? '，继续降重…' : ''));
+          + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : ''));
         if (sim > 0.05 && attempt < 3) { next.push(a); return; }
         aiResults.set(a.idx, { ok: true, text: out, sim });
       });
@@ -552,7 +552,8 @@
     // 兜底：任何漏网文章标记失败（正常情况下不会发生）
     ready.forEach((a) => { if (!aiResults.has(a.idx)) aiResults.set(a.idx, { ok: false, err: 'AI 改写未完成' }); });
 
-    // ---- 阶段3（并发受限）：构建并导出 Word（文件名 = 正文前 10 字 + 重复率） ----
+    // ---- 阶段3（并发受限）：构建并导出 Word（文件名 = 正文前 10 字 + 重复率；重名自动加序号） ----
+    const usedNames = new Set(); // 本次批量已用文件名（JS 单线程同步段内分配，并发安全）
     await mapConcurrent(ready, concurrency, async (a) => {
       const r = aiResults.get(a.idx);
       if (!r || !r.ok) { a.ok = false; a.err = (r && r.err) || 'AI 未返回内容'; a.stage = '改写'; return; }
@@ -562,7 +563,17 @@
         // 重复率在阶段2判重时已算好（r.sim），直接复用保证文件名与该次判定一致
         const sim = r.sim != null ? r.sim : textSimilarity(a.text, out);
         const blocks = blocksWithImages(a.text, out, a.pngImages || []);
-        const docxName = docxNameFromText(out, a.title || ('文章' + a.idx), sim);
+        let docxName = docxNameFromText(out, a.title || ('文章' + a.idx), sim);
+        // 同名文件自动追加序号（正文开头相同/重复率相同的文章会重名），
+        // 避免 Android MediaStore 同路径同名插入失败导致批量导出大量失败
+        if (usedNames.has(docxName)) {
+          const dot = docxName.lastIndexOf('.');
+          const ext = dot >= 0 ? docxName.slice(dot) : '';
+          const base = dot >= 0 ? docxName.slice(0, dot) : docxName;
+          let seq = 1;
+          do { seq++; docxName = base + '_' + seq + ext; } while (usedNames.has(docxName));
+        }
+        usedNames.add(docxName);
         const docxBuf = buildDocx(a.title || '生成文章', blocks);
         logAuto('📄 [第 ' + a.idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + (sim * 100).toFixed(1) + '%，' + (a.pngImages || []).length + ' 张图片）…');
         await downloadDocx(docxBuf, docxName);
