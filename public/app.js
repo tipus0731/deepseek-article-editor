@@ -24,6 +24,7 @@ const els = {
   modeBanner: $('modeBanner'),
   thinking: $('thinking'), effort: $('effort'), effortField: $('effortField'),
   apiBase: $('apiBase'), customModel: $('customModel'),
+  minChars: $('minChars'), minImages: $('minImages'),
   saveModelBtn: $('saveModelBtn'), resetModelBtn: $('resetModelBtn'),
   linkArticle: $('linkArticle'), linkTitle: $('linkTitle'), linkSourceTag: $('linkSourceTag'),
   sysPrompt: $('sysPrompt'), dedupPrompt: $('dedupPrompt'),
@@ -1163,6 +1164,10 @@ function loadModelSettings() {
   els.customModel.value = storeGet('dsw_custom_model') || '';
   const bc = storeGet('dsw_batch_conc');
   if (bc && els.batchConc && [...els.batchConc.options].some((o) => o.value === bc)) els.batchConc.value = bc;
+  const mc = storeGet('dsw_min_chars');
+  if (mc != null && els.minChars) els.minChars.value = mc;
+  const mi = storeGet('dsw_min_images');
+  if (mi != null && els.minImages) els.minImages.value = mi;
   syncThinkingUI();
   syncModelUi();
 }
@@ -1174,21 +1179,28 @@ function syncThinkingUI() {
 els.thinking.addEventListener('change', () => { syncThinkingUI(); storeSet('dsw_thinking', els.thinking.checked ? '1' : '0'); storeSet('dsw_model', els.model.value); });
 els.effort.addEventListener('change', () => storeSet('dsw_effort', els.effort.value));
 if (els.batchConc) els.batchConc.addEventListener('change', () => storeSet('dsw_batch_conc', els.batchConc.value));
+if (els.minChars) els.minChars.addEventListener('change', () => storeSet('dsw_min_chars', els.minChars.value));
+if (els.minImages) els.minImages.addEventListener('change', () => storeSet('dsw_min_images', els.minImages.value));
 els.saveModelBtn.addEventListener('click', () => {
   storeSet('dsw_thinking', els.thinking.checked ? '1' : '0');
   storeSet('dsw_effort', els.effort.value);
   storeSet('dsw_api_base', els.apiBase.value.trim());
   storeSet('dsw_custom_model', els.customModel.value.trim());
+  storeSet('dsw_min_chars', els.minChars ? els.minChars.value : '0');
+  storeSet('dsw_min_images', els.minImages ? els.minImages.value : '0');
   syncModelUi();
   flash('模型设置已保存到本地（升级 APK 不丢失）' + (currentCustomModel() ? '，后续请求将使用自定义模型「' + currentCustomModel() + '」' : ''));
 });
 els.resetModelBtn.addEventListener('click', () => {
   storeRemove('dsw_thinking'); storeRemove('dsw_effort');
   storeRemove('dsw_api_base'); storeRemove('dsw_custom_model');
+  storeRemove('dsw_min_chars'); storeRemove('dsw_min_images');
   els.thinking.checked = true;
   els.effort.value = 'max';
   els.apiBase.value = '';
   els.customModel.value = '';
+  if (els.minChars) els.minChars.value = '0';
+  if (els.minImages) els.minImages.value = '0';
   syncThinkingUI();
   syncModelUi();
   flash('已恢复默认模型设置');

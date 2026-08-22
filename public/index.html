@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.38</span>
+        <span class="badge" title="版本号">v1.39</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -207,6 +207,17 @@
             <span>自定义模型名（可选，留空=用上方所选模型）</span>
             <input id="customModel" type="text" placeholder="例如：gpt-4o / qwen-max…" spellcheck="false">
           </label>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <label class="field inline-field" style="flex:1;min-width:150px;">
+              <span>批量·最少正文字数（0=不限）</span>
+              <input id="minChars" type="number" min="0" step="50" value="0" placeholder="例如 300">
+            </label>
+            <label class="field inline-field" style="flex:1;min-width:150px;">
+              <span>批量·最少图片张数（0=不限）</span>
+              <input id="minImages" type="number" min="0" step="1" value="0" placeholder="例如 1">
+            </label>
+          </div>
+          <p class="hint">批量处理时：正文字数少于设置值、或图片张数少于设置值的文章将<b>跳过 AI 改写</b>（0 = 不限制，跳过的不计成功也不计失败）。</p>
           <div class="prompt-actions">
             <button id="saveModelBtn" class="btn primary sm" type="button">💾 保存设置</button>
             <button id="resetModelBtn" class="btn ghost sm" type="button">恢复默认</button>

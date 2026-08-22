@@ -10,8 +10,8 @@ android {
         applicationId "com.ds.articleeditor"
         minSdk 24
         targetSdk 34
-        versionCode 32
-        versionName "1.38"
+        versionCode 33
+        versionName "1.39"
     }
 
     buildTypes {

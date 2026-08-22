@@ -494,11 +494,14 @@
     const tBatch = Date.now(); // 流水线总耗时计时
     logAuto('📚 开始流水线处理 ' + urls.length + ' 个链接（全局并发上限：' + (concurrency === Infinity ? '不限' : concurrency) + '；每篇由同一并发槽串起 抓取→AI改写(≤5%判重,最多3轮)→导出Word）');
     logAuto('🚀 已同时开启 ' + (concurrency === Infinity ? '全部' : concurrency) + ' 个并发槽：每篇由独立槽处理，完成后自动领取下一篇，直到全部处理完');
+    const minChars = parseInt(String((els.minChars && els.minChars.value) || '0'), 10) || 0;
+    const minImages = parseInt(String((els.minImages && els.minImages.value) || '0'), 10) || 0;
+    if (minChars > 0 || minImages > 0) logAuto('⛔ 过滤已开启：正文 < ' + minChars + ' 字 或 图片 < ' + minImages + ' 张 的文章将跳过 AI 改写');
     if (nativeAI) logAuto('🤖 Android：AI 调用走 Java 原生线程池（安全上限 MAX_AI_THREADS=100）');
 
     const usedNames = new Set(); // 本次批量已用文件名（同步段内分配，并发安全）
     let inFlight = 0; // 当前同时在处理的篇数（并发可视化）
-    let doneCount = 0, okCount = 0, failCount = 0;
+    let doneCount = 0, okCount = 0, failCount = 0, skippedCount = 0;
     const failList = [];
 
     /* 单篇 AI 调用（Android 走 Java 线程池单任务，网页走 JS 并发流式）；
@@ -541,6 +544,17 @@
         const articleText = String(data.text || '').trim();
         if (!articleText) throw new Error('抓取到的正文为空');
         const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
+        // 过滤设置：正文/图片低于阈值 → 跳过 AI 改写（不裁图、不改写、不导出）
+        if (minChars > 0 && articleText.length < minChars) {
+          skippedCount++;
+          logAuto('⏭ [第 ' + idx + ' 篇] 跳过：正文 ' + articleText.length + ' 字 < 最少 ' + minChars + ' 字');
+          return;
+        }
+        if (minImages > 0 && imgs.length < minImages) {
+          skippedCount++;
+          logAuto('⏭ [第 ' + idx + ' 篇] 跳过：图片 ' + imgs.length + ' 张 < 最少 ' + minImages + ' 张');
+          return;
+        }
         logAuto('✅ [第 ' + idx + ' 篇] 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
         const pngImages = await preparePngImages(imgs.map((u) => ({ url: u, blobUrl: '' })), { log: logAuto, autoCrop: true });
 
@@ -594,10 +608,10 @@
     window.__batchBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = '📚 并发批量生成 Word'; }
     setStatus(
-      '✅ 批量完成：成功 ' + okCount + ' 篇，失败 ' + failCount + ' 篇（共 ' + urls.length + ' 条链接），总耗时 ' + formatDuration(totalMs),
+      '✅ 批量完成：成功 ' + okCount + ' 篇，跳过 ' + skippedCount + ' 篇，失败 ' + failCount + ' 篇（共 ' + urls.length + ' 条链接），总耗时 ' + formatDuration(totalMs),
       failCount ? 'error' : ''
     );
-    logAuto('⏱ 总耗时：' + formatDuration(totalMs) + '（成功 ' + okCount + ' 篇，失败 ' + failCount + ' 篇）');
+    logAuto('⏱ 总耗时：' + formatDuration(totalMs) + '（成功 ' + okCount + ' 篇，跳过 ' + skippedCount + ' 篇，失败 ' + failCount + ' 篇）');
     if (failList.length) {
       logAuto('失败明细：');
       failList.forEach((f) => logAuto('  ✗ ' + f.url + ' → ' + f.err));
