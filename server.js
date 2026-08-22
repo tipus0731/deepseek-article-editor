@@ -247,25 +247,42 @@ async function handleRewrite(req, res) {
   if (model === 'deepseek-v4-flash') payload.max_tokens = 8192; // v4-pro 使用其默认输出上限
   if (effort && /^(low|medium|high)$/.test(effort)) payload.reasoning_effort = effort;
 
-  let upstream;
-  try {
-    upstream = await fetch(upstreamBase + '/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + apiKey,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(300000),
-    });
-  } catch (e) {
-    return sendJson(res, 502, { error: '无法连接 DeepSeek API：' + e.message });
+  // 5xx/429/网络错误自动重试（最多 3 次，指数退避），减少上游间歇性故障透传给前端
+  let upstream = null;
+  let upstreamStatus = 0;
+  let upstreamText = '';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      upstream = await fetch(upstreamBase + '/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + apiKey,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(300000),
+      });
+      upstreamStatus = upstream.status;
+      if (upstream.ok) break;
+      if ((upstreamStatus >= 500 || upstreamStatus === 429) && attempt < 3) {
+        upstreamText = await upstream.text().catch(() => '');
+        await sleepMs(attempt * 1200);
+        continue;
+      }
+      break;
+    } catch (e) {
+      upstream = null;
+      upstreamStatus = 0;
+      upstreamText = e.message;
+      if (attempt < 3) { await sleepMs(attempt * 1200); continue; }
+      break;
+    }
   }
 
-  if (!upstream.ok) {
-    const errText = await upstream.text().catch(() => '');
-    return sendJson(res, upstream.status, {
-      error: 'DeepSeek API 返回错误（' + upstream.status + '）：' + errText.slice(0, 600),
+  if (!upstream || !upstream.ok) {
+    const errText = upstream ? await upstream.text().catch(() => '') : upstreamText;
+    return sendJson(res, upstream ? upstreamStatus : 502, {
+      error: 'DeepSeek API 返回错误（' + (upstream ? upstreamStatus : 502) + '）：' + errText.slice(0, 600),
     });
   }
 
@@ -486,7 +503,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────────');
-  console.log('  文章助手 v1.32 已启动');
+  console.log('  文章助手 v1.33 已启动');
   console.log('  访问地址: http://' + HOST + ':' + PORT);
   console.log(
     SERVER_KEY

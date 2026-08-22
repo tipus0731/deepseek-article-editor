@@ -630,6 +630,8 @@ function buildMessages(text) {
 }
 
 /* ================= 流式调用 DeepSeek ================= */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function streamRewrite(body, signal, out) {
   // out = {text:''}（可选）：批量并发时传入，增量写入 out.text，不再写全局 outputText / 更新界面
   if (isExpired()) throw new Error('软件已到期，功能已停止使用');
@@ -650,19 +652,30 @@ async function streamRewrite(body, signal, out) {
       const lv = map[els.effort.value] || 'high';
       payload.reasoning_effort = lv;
     }
-    try {
-      res = await fetch(apiBase + '/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + apiKey,
-        },
-        body: JSON.stringify(payload),
-        signal,
-      });
-    } catch (e) {
-      if (e.name === 'AbortError') throw new Error('__ABORT__');
-      throw new Error('无法连接 api.deepseek.com：' + e.message + '。请检查网络；若浏览器拦截跨域（CORS），请改用 node server.js 启动本地服务模式。');
+    // 5xx/429 与网络抖动自动重试（最多 3 次，指数退避）：DeepSeek 官方间歇性 500 很常见
+    let tries = 0;
+    while (true) {
+      try {
+        res = await fetch(apiBase + '/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + apiKey,
+          },
+          body: JSON.stringify(payload),
+          signal,
+        });
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error('__ABORT__');
+        if (++tries < 3) { await sleep(1000 * tries); continue; }
+        throw new Error('无法连接 api.deepseek.com：' + e.message + '。请检查网络；若浏览器拦截跨域（CORS），请改用 node server.js 启动本地服务模式。');
+      }
+      if (!res.ok && (res.status >= 500 || res.status === 429) && tries < 3) {
+        await res.text().catch(() => '');
+        await sleep(1000 * ++tries);
+        continue;
+      }
+      break;
     }
   } else {
     // 服务模式：经本地服务转发（附带供应商地址与思考强度）
@@ -677,16 +690,27 @@ async function streamRewrite(body, signal, out) {
       apiBase: apiBase || undefined,
       reasoning_effort: effort || undefined,
     });
-    try {
-      res = await fetch('/api/rewrite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(srvBody),
-        signal,
-      });
-    } catch (e) {
-      if (e.name === 'AbortError') throw new Error('__ABORT__');
-      throw new Error('请求失败：' + e.message);
+    // 服务端透传的 5xx/429 同样自动重试（最多 3 次，指数退避）
+    let tries = 0;
+    while (true) {
+      try {
+        res = await fetch('/api/rewrite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(srvBody),
+          signal,
+        });
+      } catch (e) {
+        if (e.name === 'AbortError') throw new Error('__ABORT__');
+        if (++tries < 3) { await sleep(1000 * tries); continue; }
+        throw new Error('请求失败：' + e.message);
+      }
+      if (!res.ok && (res.status >= 500 || res.status === 429) && tries < 3) {
+        await res.text().catch(() => '');
+        await sleep(1000 * ++tries);
+        continue;
+      }
+      break;
     }
   }
 

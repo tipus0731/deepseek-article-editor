@@ -307,42 +307,65 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** POST JSON 到 AI 接口（非流式，同步返回响应文本） */
+        /** POST JSON 到 AI 接口（非流式，同步返回响应文本；
+         *  5xx/429/网络抖动自动重试，最多尝试 3 次，指数退避——DeepSeek 官方间歇性 500 很常见 */
         private String httpPostJson(String urlStr, JSONObject payload, String apiKey) throws Exception {
-            HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod("POST");
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(180000);
-            conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            conn.setRequestProperty("Accept", "application/json");
-            conn.setRequestProperty("Accept-Encoding", "gzip");
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            conn.setDoOutput(true);
-            byte[] body = payload.toString().getBytes("UTF-8");
-            try (OutputStream os = conn.getOutputStream()) { os.write(body); }
-            int code = conn.getResponseCode();
-            InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
-            String enc = conn.getContentEncoding();
-            if ("gzip".equalsIgnoreCase(enc) && in != null) in = new GZIPInputStream(in);
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            if (in != null) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-                in.close();
-            }
-            conn.disconnect();
-            String text = new String(out.toByteArray(), "UTF-8");
-            if (code < 200 || code >= 300) {
-                String msg = text;
+            Exception lastErr = null;
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                HttpURLConnection conn = null;
                 try {
-                    JSONObject e = new JSONObject(text);
-                    if (e.optJSONObject("error") != null) msg = e.getJSONObject("error").optString("message", text);
-                } catch (Exception ignore) { }
-                throw new Exception("HTTP " + code + "：" + (msg.length() > 300 ? msg.substring(0, 300) : msg));
+                    conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(180000);
+                    conn.setInstanceFollowRedirects(true);
+                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                    conn.setRequestProperty("Accept", "application/json");
+                    conn.setRequestProperty("Accept-Encoding", "gzip");
+                    conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                    conn.setDoOutput(true);
+                    byte[] body = payload.toString().getBytes("UTF-8");
+                    try (OutputStream os = conn.getOutputStream()) { os.write(body); }
+                    int code = conn.getResponseCode();
+                    InputStream in = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+                    String enc = conn.getContentEncoding();
+                    if ("gzip".equalsIgnoreCase(enc) && in != null) in = new GZIPInputStream(in);
+                    ByteArrayOutputStream out = new ByteArrayOutputStream();
+                    if (in != null) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                        in.close();
+                    }
+                    String text = new String(out.toByteArray(), "UTF-8");
+                    if (code < 200 || code >= 300) {
+                        if ((code >= 500 || code == 429) && attempt < 3) {
+                            Thread.sleep(attempt * 1500L); // 上游瞬时故障/限流 → 退避后重试
+                            lastErr = new Exception("HTTP " + code);
+                            continue;
+                        }
+                        String msg = text;
+                        try {
+                            JSONObject e = new JSONObject(text);
+                            if (e.optJSONObject("error") != null) msg = e.getJSONObject("error").optString("message", text);
+                        } catch (Exception ignore) { }
+                        throw new Exception("HTTP " + code + "：" + (msg.length() > 300 ? msg.substring(0, 300) : msg));
+                    }
+                    return text;
+                } catch (Exception e) {
+                    lastErr = e;
+                    if (attempt < 3) {
+                        try { Thread.sleep(attempt * 1500L); } catch (InterruptedException ie) { break; }
+                        continue;
+                    }
+                    throw e;
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
             }
-            return text;
+            throw (lastErr != null)
+                    ? new Exception("AI 接口请求失败（已尝试 3 次）：" + lastErr.getMessage())
+                    : new Exception("AI 接口请求失败");
         }
 
         /** 核心：用 HttpURLConnection 抓取并解析文章，返回 JSON */
