@@ -378,7 +378,7 @@
       setStatus('✅ 完成：重复度 ' + (finalSim * 100).toFixed(1) + '%（' + attemptsUsed + '/3 次尝试），可预览并保存 Word');
     } catch (e) {
       stopTimer();
-      setStatus('❌ ' + e.message, 'error');
+      setStatus('❌ ' + classifyError(e).label + ': ' + e.message, 'error');
     } finally {
       window.__smartBusy = false;
       document.getElementById('smartBtn').disabled = false;
@@ -478,17 +478,17 @@
     let next = 0, done = 0;
     const max = (Number.isFinite(limit) && limit > 0) ? Math.floor(limit) : Infinity;
     return new Promise((resolve) => {
-      const tick = () => {
+      const tick = (k) => {
         if (next >= items.length) return;
         const i = next++;
         Promise.resolve()
-          .then(() => fn(items[i], i))
+          .then(() => fn(items[i], i, k))
           .then((v) => { results[i] = v; })
           .catch((e) => { results[i] = (e instanceof Error) ? e : new Error(String(e)); })
-          .then(() => { if (++done === items.length) resolve(results); else tick(); });
+          .then(() => { if (++done === items.length) resolve(results); else tick(k); });
       };
       const workers = Math.min(max, items.length);
-      for (let k = 0; k < workers; k++) tick();
+      for (let k = 0; k < workers; k++) tick(k);
       if (items.length === 0) resolve(results);
     });
   }
@@ -536,14 +536,59 @@
     let doneCount = 0, okCount = 0, failCount = 0, skippedCount = 0;
     const failList = [];
 
+    // ---- 线程进度面板：每个并发槽一条进度条（最多展示 30 条，其余后台运行） ----
+    const threadPanel = document.getElementById('threadPanel');
+    const totalSlots = Math.max(1, Math.min(urls.length, concurrency === Infinity ? urls.length : concurrency));
+    const maxBars = 30;
+    const barCount = Math.min(totalSlots, maxBars);
+    const bars = [];
+    if (threadPanel) {
+      threadPanel.innerHTML = '';
+      threadPanel.classList.remove('hidden');
+      for (let s = 0; s < barCount; s++) {
+        const item = document.createElement('div');
+        item.className = 'thread-item';
+        item.innerHTML = '<div class="tb-head"><span class="tb-title">线程 #' + (s + 1) + '</span>'
+          + '<span class="tb-stage">等待任务</span>'
+          + '<span class="tb-url"></span>'
+          + '<span class="tb-elapsed"></span></div>'
+          + '<div class="tb-track"><div class="tb-fill"></div></div>'
+          + '<div class="tb-stream"></div>';
+        threadPanel.appendChild(item);
+        bars.push({
+          item,
+          stage: item.querySelector('.tb-stage'),
+          url: item.querySelector('.tb-url'),
+          elapsed: item.querySelector('.tb-elapsed'),
+          fill: item.querySelector('.tb-fill'),
+          stream: item.querySelector('.tb-stream'),
+          t0: 0,
+        });
+      }
+      if (totalSlots > maxBars) {
+        const note = document.createElement('div');
+        note.className = 'tb-note';
+        note.textContent = '另有 ' + (totalSlots - maxBars) + ' 路并发在后台运行（进度省略）';
+        threadPanel.appendChild(note);
+      }
+    }
+    const elapsedTimer = setInterval(() => {
+      for (const b of bars) {
+        if (b.t0 && b.elapsed && b.stage && !/(✅|❌|⏭|等待任务)/.test(b.stage.textContent)) {
+          b.elapsed.textContent = '⏱ ' + formatDuration(Date.now() - b.t0);
+        }
+      }
+    }, 1000);
+
     /* 单篇 AI 调用（Android 走 Java 线程池单任务，网页走 JS 并发流式）；
        5xx/429 失败后全局冷却 2.5 秒，避免风暴持续冲击上游 */
     let coolUntil = 0;
-    const aiCall = async (a) => {
+    const aiCall = async (a, slot) => {
       const wait = coolUntil - Date.now();
       if (wait > 0) await sleep(wait);
       try {
         if (nativeAI) {
+          if (slot != null && slot < bars.length) bars[slot].stream.textContent = '🤖 原生通道请求中（非流式，等待完整返回）…';
           const r = await nativeAiBatch([{
             id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
             concurrency: 1,
@@ -552,7 +597,17 @@
           if (one && one.__err) throw new Error(one.__err);
           return String(one || '').trim();
         }
-        const collector = { text: '' };
+        // 网页流式：把 AI 增量输出实时显示到该线程进度条下方
+        const collector = {
+          text: '',
+          onChunk: (t) => {
+            if (slot != null && slot < bars.length && bars[slot].stream) {
+              const el = bars[slot].stream;
+              el.textContent = ((el.textContent || '') + t).slice(-400);
+              el.scrollTop = el.scrollHeight;
+            }
+          },
+        };
         await streamRewrite({ apiKey, model, messages: a.messages }, new AbortController().signal, collector);
         return String(collector.text || '').trim();
       } catch (e) {
@@ -562,10 +617,21 @@
     };
 
     // ---- 单篇文章流水线：抓取 → AI 改写(判重降重) → 导出 Word ----
-    await mapConcurrent(urls, concurrency, async (url, i) => {
+    await mapConcurrent(urls, concurrency, async (url, i, slot) => {
       const idx = i + 1;
       const tOne = Date.now();
       inFlight++;
+      const bar = (slot != null && slot < bars.length) ? bars[slot] : null;
+      const setStage = (txt, w, streamText) => {
+        if (!bar) return;
+        bar.t0 = Date.now();
+        bar.stage.textContent = txt;
+        bar.fill.style.width = w + '%';
+        bar.url.textContent = url;
+        if (streamText != null) bar.stream.textContent = streamText;
+        bar.item.classList.remove('done', 'failed');
+      };
+      setStage('🔗 抓取正文中…', 12, '');
       const concLabel = concurrency === Infinity ? '全部' : concurrency;
       setStatus('⚡ 并发 ' + concLabel + ' 路流水线运行中：进行中 ' + inFlight + ' 篇，已完成 ' + doneCount + '/' + urls.length + ' 篇…', 'loading');
       logAuto('🚀 [' + idx + '/' + urls.length + '] ' + url + '（当前同时进行 ' + inFlight + ' 篇）');
@@ -579,15 +645,18 @@
         // 过滤设置：正文/图片低于阈值 → 跳过 AI 改写（不裁图、不改写、不导出）
         if (minChars > 0 && articleText.length < minChars) {
           skippedCount++;
+          setStage('⏭ 跳过（过滤）', 100, '正文 ' + articleText.length + ' 字 < 最少 ' + minChars + ' 字');
           logAuto('⏭ [第 ' + idx + ' 篇] 跳过：正文 ' + articleText.length + ' 字 < 最少 ' + minChars + ' 字');
           return;
         }
         if (minImages > 0 && imgs.length < minImages) {
           skippedCount++;
+          setStage('⏭ 跳过（过滤）', 100, '图片 ' + imgs.length + ' 张 < 最少 ' + minImages + ' 张');
           logAuto('⏭ [第 ' + idx + ' 篇] 跳过：图片 ' + imgs.length + ' 张 < 最少 ' + minImages + ' 张');
           return;
         }
         logAuto('✅ [第 ' + idx + ' 篇] 抓取成功：' + (data.title || '(无标题)') + '（正文 ' + articleText.length + ' 字，图片 ' + imgs.length + ' 张）');
+        setStage('🖼 图片处理中…', 25, imgs.length ? ('共 ' + imgs.length + ' 张图片裁切去水印中…') : '');
         const pngImages = await preparePngImages(imgs.map((u) => ({ url: u, blobUrl: '' })), { log: logAuto, autoCrop: true });
 
         // ② AI 改写 + 自动判重降重（≤5% 达标；>5% 最多 3 轮；3 轮后仍超标也导出）
@@ -596,10 +665,11 @@
         let sim = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
           rec.messages = buildSmartMessages(articleText, attempt > 1 ? sim : null);
+          setStage('🧠 AI 改写中（第 ' + attempt + '/3 轮）…', 55, '等待 AI 流式输出…');
           // 空内容自动重试：上游偶发 200 空回复/思考超限，同一轮最多重试 3 次
           out = '';
           for (let tries = 1; tries <= 3 && !out; tries++) {
-            out = await aiCall(rec);
+            out = await aiCall(rec, slot);
             if (!out && tries < 3) {
               logAuto('⚠ [第 ' + idx + ' 篇] AI 返回空内容，重试 ' + tries + '/3…');
               await sleep(1500 * tries);
@@ -616,6 +686,7 @@
           if (sim <= 0.05) break;
         }
 
+        setStage('📊 判重计算中…', 78, '重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(1) + '%');
         // ③ 构建并导出 Word（文件名默认 = 正文前 10 字 + 重复率；勾选链接作为文件名时使用链接 + 重复率；重名自动加序号）
         const blocks = blocksWithImages(articleText, out, pngImages);
         const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
@@ -633,13 +704,30 @@
         const docxBuf = buildDocx(data.title || '生成文章', blocks);
         logAuto('📄 [第 ' + idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(1) + '%，' + pngImages.length + ' 张图片）…');
 
+        setStage('📦 生成 Word 中…', 92, docxName);
         await downloadDocx(docxBuf, docxName);
         logAuto('💾 [第 ' + idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
         okCount++;
+        if (bar) {
+          bar.stage.textContent = '✅ 完成';
+          bar.fill.style.width = '100%';
+          bar.stream.textContent = '已导出：' + docxName;
+          bar.elapsed.textContent = '⏱ ' + formatDuration(Date.now() - tOne);
+          bar.item.classList.add('done');
+        }
       } catch (e) {
         failCount++;
-        failList.push({ idx, url, err: e.message });
-        logAuto('❌ 第 ' + idx + ' 条失败：' + e.message);
+        // 报错分类：程序出错 = 我方代码异常；异常获取 = 外部网络/接口异常
+        const c = classifyError(e);
+        const errText = c.label + ': ' + (e && e.message ? e.message : String(e));
+        failList.push({ idx, url, err: errText });
+        if (bar) {
+          bar.stage.textContent = '❌ ' + c.label;
+          bar.fill.style.width = '100%';
+          bar.stream.textContent = errText;
+          bar.item.classList.add('failed');
+        }
+        logAuto('❌ 第 ' + idx + ' 条失败[' + c.label + ']：' + errText);
       } finally {
         inFlight--;
         doneCount++;
@@ -648,6 +736,7 @@
       }
     });
 
+    clearInterval(elapsedTimer);
     const totalMs = Date.now() - tBatch; // 流水线总耗时
     window.__batchBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = '📚 并发批量生成 Word'; }

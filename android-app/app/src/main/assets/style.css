@@ -464,3 +464,19 @@ body.expired-lock .card, body.expired-lock .action-bar { pointer-events: none; o
   .toast { bottom: 16px; }
   footer { padding: 14px 12px 24px; }
 }
+
+/* ============ 线程进度面板（批量流水线） ============ */
+.thread-panel { margin: 10px 0; display: flex; flex-direction: column; gap: 8px; max-height: 430px; overflow-y: auto; }
+.thread-item { border: 1px solid #e3e8ef; border-radius: 8px; padding: 8px 10px; background: #fafbfd; }
+.thread-item.done { border-color: #b7e3c0; background: #f2fbf4; }
+.thread-item.failed { border-color: #f5c2c2; background: #fdf3f3; }
+.tb-head { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.tb-title { font-weight: 600; color: #334; }
+.tb-stage { padding: 1px 8px; border-radius: 999px; background: #eef4ff; color: #2b6cb0; white-space: nowrap; }
+.tb-url { color: #889; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 42%; }
+.tb-elapsed { color: #aab; font-size: 11px; margin-left: auto; }
+.tb-track { height: 8px; background: #e8edf4; border-radius: 999px; margin-top: 6px; overflow: hidden; }
+.tb-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #3b82f6, #22c55e); border-radius: 999px; transition: width .4s; }
+.tb-stream { margin-top: 6px; font-size: 12px; color: #556; background: #fff; border: 1px dashed #d5dbe6; border-radius: 6px; padding: 6px 8px; max-height: 96px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+.tb-note { font-size: 12px; color: #889; padding: 4px 2px; }
+

@@ -630,6 +630,17 @@ function buildMessages(text) {
   ];
 }
 
+/* ================= 报错分类 =================
+ * 程序出错 = 我方代码异常（TypeError/ReferenceError 等程序 Bug）
+ * 异常获取 = 外部网络/接口异常（连不上、HTTP 错误、超时、空回复、抓取失败等） */
+function classifyError(e) {
+  const msg = String((e && e.message) || e || '');
+  const internal = e instanceof TypeError || e instanceof RangeError || e instanceof ReferenceError
+    || e instanceof SyntaxError || e instanceof URIError
+    || /is not a function|Cannot read propert|undefined is not|Maximum call stack|Invalid character|Failed to execute|Unexpected token|非法调用|循环引用/.test(msg);
+  return { internal, label: internal ? '程序出错' : '异常获取' };
+}
+
 /* ================= 流式调用 DeepSeek ================= */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -765,6 +776,7 @@ async function streamRewrite(body, signal, out) {
       if (delta.content) {
         if (out) {
           out.text += delta.content;
+          if (typeof out.onChunk === 'function') out.onChunk(delta.content);
         } else {
           outputText += delta.content;
           els.outResult.appendChild(document.createTextNode(delta.content));
@@ -835,7 +847,7 @@ async function runRewrite() {
         setStatus('⏹ 已停止（耗时 ' + formatDuration(elapsed) + '）', 'error');
       }
     } else {
-      setStatus('❌ ' + e.message + '（耗时 ' + formatDuration(elapsed) + '）', 'error');
+      setStatus('❌ ' + classifyError(e).label + ': ' + e.message + '（耗时 ' + formatDuration(elapsed) + '）', 'error');
     }
   } finally {
     setRunning(false);
