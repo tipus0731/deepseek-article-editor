@@ -327,15 +327,22 @@
         setStatus('第 ' + attempt + '/3 次改写中…', 'loading');
         const messages = buildSmartMessages(original, attempt > 1 ? finalSim : null);
         lastOriginal = original;
-        outputText = '';
-        document.getElementById('outResult').textContent = '';
-        document.getElementById('outResult').classList.remove('hidden');
-        document.getElementById('outEmpty').classList.add('hidden');
-        switchView('result');
-        startTimer('正在改写（第 ' + attempt + '/3 次）…');
-        await streamRewrite({ apiKey, model, messages }, new AbortController().signal);
-        stopTimer();
-        renderRichResult();
+        // 空内容自动重试：同一轮最多重试 3 次（上游偶发 200 空回复/思考超限）
+        let got = false;
+        for (let tries = 1; tries <= 3 && !got; tries++) {
+          outputText = '';
+          document.getElementById('outResult').textContent = '';
+          document.getElementById('outResult').classList.remove('hidden');
+          document.getElementById('outEmpty').classList.add('hidden');
+          switchView('result');
+          startTimer('正在改写（第 ' + attempt + '/3 次）…');
+          await streamRewrite({ apiKey, model, messages }, new AbortController().signal);
+          stopTimer();
+          renderRichResult();
+          got = String(outputText || '').trim().length > 0;
+          if (!got && tries < 3) { logAuto('⚠ AI 返回空内容，重试 ' + tries + '/3…'); await sleep(1500 * tries); }
+        }
+        if (!got) { finalText = ''; finalSim = 1; logAuto('⚠ AI 连续 3 次返回空内容'); break; }
 
         const sim = textSimilarity(original, outputText);
         finalSim = sim;
@@ -350,6 +357,12 @@
         } else {
           logAuto('⚠ 3 次尝试后重复度仍 ' + pct + '% > 5%，不再重试，按当前版本预览并保存导出。');
         }
+      }
+
+      if (!String(finalText || '').trim()) {
+        setStatus('❌ AI 多次返回空内容，请重试或更换模型（可尝试 V4 Flash 或降低并发）', 'error');
+        logAuto('❌ 本次改写失败：AI 连续多次返回空内容');
+        return;
       }
 
       // 记录本次重复率（供保存按钮命名），生成预览 + 准备 Word（不自动下载，等用户点保存）
@@ -583,8 +596,16 @@
         let sim = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
           rec.messages = buildSmartMessages(articleText, attempt > 1 ? sim : null);
-          out = await aiCall(rec);
-          if (!out) throw new Error('AI 未返回内容');
+          // 空内容自动重试：上游偶发 200 空回复/思考超限，同一轮最多重试 3 次
+          out = '';
+          for (let tries = 1; tries <= 3 && !out; tries++) {
+            out = await aiCall(rec);
+            if (!out && tries < 3) {
+              logAuto('⚠ [第 ' + idx + ' 篇] AI 返回空内容，重试 ' + tries + '/3…');
+              await sleep(1500 * tries);
+            }
+          }
+          if (!out) throw new Error('AI 未返回内容（已重试 3 次：可能是思考超限或上游空回复，可稍后重试或降低并发）');
           const cut = cutFactCheck(out);
           if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
           out = cut;

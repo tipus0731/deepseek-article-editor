@@ -295,17 +295,24 @@ public class MainActivity extends Activity {
             String effort = task.optString("reasoningEffort", "");
             if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
 
-            String body = httpPostJson(apiBase + "/chat/completions", payload, apiKey);
-            JSONObject j = new JSONObject(body);
+            // 空内容自动重试：上游偶发返回 200 但 content 为 null（思考超限/中转站不兼容），重试通常能拿到内容
             String content = "";
-            JSONArray choices = j.optJSONArray("choices");
-            if (choices != null && choices.length() > 0) {
-                JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
-                if (msg != null) {
-                    String c = msg.optString("content", null);
-                    if (c != null) content = c;
+            for (int tryNo = 1; tryNo <= 3; tryNo++) {
+                String body = httpPostJson(apiBase + "/chat/completions", payload, apiKey);
+                JSONObject j = new JSONObject(body);
+                content = "";
+                JSONArray choices = j.optJSONArray("choices");
+                if (choices != null && choices.length() > 0) {
+                    JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
+                    if (msg != null) {
+                        String c = msg.optString("content", null);
+                        if (c != null) content = c;
+                    }
                 }
+                if (!content.trim().isEmpty()) break;
+                if (tryNo < 3) { try { Thread.sleep(1500L * tryNo); } catch (InterruptedException ie) { break; } }
             }
+            if (content.trim().isEmpty()) throw new Exception("AI 返回空内容（已重试 3 次）");
             return "{\"ok\":true,\"text\":" + JSONObject.quote(content) + "}";
         }
 
