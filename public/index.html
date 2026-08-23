@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.44</span>
+        <span class="badge" title="版本号">v1.45</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -70,14 +70,17 @@
               <option value="0">不限</option>
             </select>
           </label>
-          <label class="batch-name-chk" title="勾选后，批量导出的 Word 文件名使用对应链接，并把重复率加在后面">
+          <label class="batch-name-chk" title="勾选后，批量导出的 Word 文件名使用对应链接（最后一段 URI），并把重复率加在后面">
             <input type="checkbox" id="useLinkNameChk"> 链接作为文件名
+          </label>
+          <label class="batch-name-chk" title="勾选后，批量导出的 Word 文件名使用抓取到的文章标题，并把重复率加在后面（与「链接作为文件名」互斥，后勾选的生效）">
+            <input type="checkbox" id="useTitleNameChk"> 文章标题作为文件名
           </label>
           <label class="batch-name-chk" title="勾选 = 按原文图片所在位置插入（AI 保留 [图片] 标记时按标记，否则按原文锚点匹配）；取消 = 全部图片统一放到文章末尾">
             <input type="checkbox" id="imgPosChk" checked> 图片按原文位置插入
           </label>
         </div>
-        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>开启同数量的流水线（例如 4000 条链接选 10 = 同时处理 10 条，每篇由同一流水线串起 抓取→AI改写(≤5%判重)→导出Word，先完成先出文件，无需等全部抓完；选 不限 = 全部同时处理），默认文件名 = 正文前 10 字 + 重复率；勾选「链接作为文件名」后则使用链接最后一段 URI + 重复率。每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>开启同数量的流水线（例如 4000 条链接选 10 = 同时处理 10 条，每篇由同一流水线串起 抓取→AI改写(≤5%判重)→导出Word，先完成先出文件，无需等全部抓完；选 不限 = 全部同时处理），默认文件名 = 正文前 10 字 + 重复率；可勾选「文章标题作为文件名」（用抓取到的标题命名）或「链接作为文件名」（用链接最后一段 URI 命名）+ 重复率，两者互斥、后勾选的生效。每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
 
         <div id="linkArticle" class="hidden">
           <div class="article-meta">
