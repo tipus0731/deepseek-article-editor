@@ -303,16 +303,17 @@ public class MainActivity extends Activity {
             if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
 
             // 空内容自动重试：上游偶发返回 200 但无正文（思考超限/中转站不兼容），重试通常能拿到内容
+            final boolean showStream = task.optBoolean("displayStream", true);
             String content = "";
-            for (int tryNo = 1; tryNo <= 3; tryNo++) {
-                if (tryNo > 1) jsAiStreamChunk(cbId, taskId, "\n—— 第 " + tryNo + " 次重试 ——\n");
+            for (int tryNo = 1; tryNo <= 2; tryNo++) {
+                if (tryNo > 1 && showStream) jsAiStreamChunk(cbId, taskId, "\n—— 第 " + tryNo + " 次重试 ——\n");
                 StringBuilder sb = new StringBuilder();
-                httpPostStream(apiBase + "/chat/completions", payload, apiKey, cbId, taskId, sb);
+                httpPostStream(apiBase + "/chat/completions", payload, apiKey, cbId, taskId, showStream, sb);
                 content = sb.toString();
                 if (!content.trim().isEmpty()) break;
-                if (tryNo < 3) { try { Thread.sleep(1500L * tryNo); } catch (InterruptedException ie) { break; } }
+                if (tryNo < 2) { try { Thread.sleep(1500L); } catch (InterruptedException ie) { break; } }
             }
-            if (content.trim().isEmpty()) throw new Exception("AI 返回空内容（已重试 3 次）");
+            if (content.trim().isEmpty()) throw new Exception("AI 返回空内容（已重试，建议稍后再试或降低并发）");
             return "{\"ok\":true,\"text\":" + JSONObject.quote(content) + "}";
         }
 
@@ -321,9 +322,11 @@ public class MainActivity extends Activity {
          *  5xx/429/网络错误仍自动重试（最多 5 次）；流中途失败整体抛出由外层处理。 */
         private void httpPostStream(String urlStr, JSONObject payload, String apiKey,
                                     final String cbId, final String taskId,
+                                    final boolean showStream,
                                     final StringBuilder out) throws Exception {
             Exception lastErr = null;
             for (int attempt = 1; attempt <= 5; attempt++) {
+                out.setLength(0); // 关键：每次尝试前清空，避免重试后新旧内容拼接错乱
                 HttpURLConnection conn = null;
                 try {
                     conn = (HttpURLConnection) new URL(urlStr).openConnection();
@@ -375,13 +378,13 @@ public class MainActivity extends Activity {
                         out.append(piece);
                         disp.append(piece);
                         long now = System.currentTimeMillis();
-                        if (now - lastFlush >= streamFlushMs() && disp.length() > 0) { // 节流：并发越多回调越稀，保护 UI 线程
+                        if (showStream && now - lastFlush >= streamFlushMs() && disp.length() > 0) { // 节流：并发越多回调越稀，保护 UI 线程
                             jsAiStreamChunk(cbId, taskId, disp.toString());
                             disp.setLength(0);
                             lastFlush = now;
                         }
                     }
-                    if (disp.length() > 0) jsAiStreamChunk(cbId, taskId, disp.toString());
+                    if (showStream && disp.length() > 0) jsAiStreamChunk(cbId, taskId, disp.toString());
                     br.close();
                     return;
                 } catch (Exception e) {
@@ -401,7 +404,7 @@ public class MainActivity extends Activity {
         /** 当前活跃流式任务数 → 回调节流间隔（并发越多间隔越长，保护 UI 线程） */
         private static final AtomicInteger activeStreams = new AtomicInteger(0);
         private long streamFlushMs() {
-            return Math.min(1500L, 250L * Math.max(1, activeStreams.get()));
+            return Math.min(2500L, Math.max(500L, 400L * Math.max(1, activeStreams.get())));
         }
 
         /** 读全量文本（错误响应用） */

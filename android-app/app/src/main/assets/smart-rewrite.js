@@ -329,7 +329,7 @@
         lastOriginal = original;
         // 空内容自动重试：同一轮最多重试 3 次（上游偶发 200 空回复/思考超限）
         let got = false;
-        for (let tries = 1; tries <= 3 && !got; tries++) {
+        for (let tries = 1; tries <= 2 && !got; tries++) {
           outputText = '';
           document.getElementById('outResult').textContent = '';
           document.getElementById('outResult').classList.remove('hidden');
@@ -340,7 +340,7 @@
           stopTimer();
           renderRichResult();
           got = String(outputText || '').trim().length > 0;
-          if (!got && tries < 3) { logAuto('⚠ AI 返回空内容，重试 ' + tries + '/3…'); await sleep(1500 * tries); }
+          if (!got && tries < 2) { logAuto('⚠ AI 返回空内容，重试 ' + tries + '/2…'); await sleep(1500 * tries); }
         }
         if (!got) { finalText = ''; finalSim = 1; logAuto('⚠ AI 连续 3 次返回空内容'); break; }
 
@@ -697,23 +697,25 @@
         for (let attempt = 1; attempt <= 3; attempt++) {
           rec.messages = buildSmartMessages(articleText, attempt > 1 ? sim : null);
           setStage('🧠 AI 改写中（第 ' + attempt + '/3 轮）…', 55, '等待 AI 流式输出…');
-          // 空内容自动重试：上游偶发 200 空回复/思考超限，同一轮最多重试 3 次
+          const rStart = Date.now();
+          // 空内容自动重试：上游偶发 200 空回复/思考超限，同一轮最多重试 2 次
           out = '';
-          for (let tries = 1; tries <= 3 && !out; tries++) {
+          for (let tries = 1; tries <= 2 && !out; tries++) {
             out = await aiCall(rec, slot);
-            if (!out && tries < 3) {
-              logAuto('⚠ [第 ' + idx + ' 篇] AI 返回空内容，重试 ' + tries + '/3…');
-              await sleep(1500 * tries);
+            if (!out && tries < 2) {
+              logAuto('⚠ [第 ' + idx + ' 篇] AI 返回空内容，重试 ' + tries + '/2…');
+              await sleep(1500);
             }
           }
-          if (!out) throw new Error('AI 未返回内容（已重试 3 次：可能是思考超限或上游空回复，可稍后重试或降低并发）');
+          if (!out) throw new Error('AI 未返回内容（已重试：可能是思考超限或上游空回复，可稍后重试或降低并发）');
           const cut = cutFactCheck(out);
           if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
           out = cut;
           sim = textSimilarity(articleText, out);
           const pct = (sim * 100).toFixed(1);
           logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
-            + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : ''));
+            + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : '')
+            + '（本轮 AI 耗时 ' + formatDuration(Date.now() - rStart) + '）');
           if (sim <= 0.05) break;
         }
 
