@@ -29,6 +29,7 @@ const els = {
   linkArticle: $('linkArticle'), linkTitle: $('linkTitle'), linkSourceTag: $('linkSourceTag'),
   sysPrompt: $('sysPrompt'), dedupPrompt: $('dedupPrompt'),
   savePromptsBtn: $('savePromptsBtn'), resetPromptsBtn: $('resetPromptsBtn'),
+  promptGroupNameInput: $('promptGroupNameInput'), renameGroupBtn: $('renameGroupBtn'),
   promptGroupSel: $('promptGroupSel'), newGroupBtn: $('newGroupBtn'), delGroupBtn: $('delGroupBtn'),
   useTextBtn: $('useTextBtn'),
   imgPanel: $('imgPanel'), imgGrid: $('imgGrid'),
@@ -1231,12 +1232,28 @@ els.savePromptsBtn.addEventListener('click', () => {
 });
 els.newGroupBtn.addEventListener('click', () => {
   const groups = getPromptGroups();
-  const ng = { id: 'g' + Date.now(), name: '提示词组' + (groups.length + 1), sys: '', img: '', dedup: '' };
+  // 支持自定义组名：在「组名」输入框填写则使用该名称，留空自动编号
+  const customName = ((els.promptGroupNameInput && els.promptGroupNameInput.value) || '').trim();
+  const ng = { id: 'g' + Date.now(), name: customName || ('提示词组' + (groups.length + 1)), sys: '', img: '', dedup: '' };
   groups.push(ng);
   storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
   storeSet(PROMPT_ACTIVE_KEY, ng.id);
+  promptGroupId = ng.id; // 保持内存态与所选组一致
   loadPromptSettings();
+  if (els.promptGroupNameInput) els.promptGroupNameInput.value = '';
   flash('已新建提示词组：' + ng.name);
+});
+els.renameGroupBtn.addEventListener('click', () => {
+  const groups = getPromptGroups();
+  const g = groups.find((x) => x.id === els.promptGroupSel.value) || groups[0];
+  if (!g) { flash('没有可重命名的提示词组', true); return; }
+  const newName = ((els.promptGroupNameInput && els.promptGroupNameInput.value) || '').trim();
+  if (!newName) { flash('请先在「组名」输入框填写新名称', true); return; }
+  const oldName = g.name;
+  g.name = newName;
+  storeSet(PROMPT_GROUPS_KEY, JSON.stringify(groups));
+  loadPromptSettings();
+  flash('提示词组已从「' + oldName + '」重命名为「' + newName + '」');
 });
 els.delGroupBtn.addEventListener('click', () => {
   const groups = getPromptGroups();

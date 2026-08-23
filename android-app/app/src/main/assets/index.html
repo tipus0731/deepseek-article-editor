@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.43</span>
+        <span class="badge" title="版本号">v1.44</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -253,6 +253,15 @@
             <div class="prompt-actions" style="align-self:flex-end;">
               <button id="newGroupBtn" class="btn sm" type="button">➕ 新建组</button>
               <button id="delGroupBtn" class="btn ghost sm" type="button">🗑 删除当前组</button>
+            </div>
+          </div>
+          <div class="prompt-group-row">
+            <label class="field inline-field" style="flex:1;min-width:220px;">
+              <span>组名（新建时用它命名；改完点「重命名当前组」可改名）</span>
+              <input id="promptGroupNameInput" placeholder="例如：科技类文章专用" spellcheck="false">
+            </label>
+            <div class="prompt-actions" style="align-self:flex-end;">
+              <button id="renameGroupBtn" class="btn sm" type="button">✏ 重命名当前组</button>
             </div>
           </div>
           <label class="field">
