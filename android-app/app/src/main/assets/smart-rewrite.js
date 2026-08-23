@@ -616,6 +616,7 @@
           const r = await nativeAiBatch([{
             id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
             concurrency: 1,
+            displayStream: (slot != null && slot < bars.length),
             onChunk: (t) => {
               if (slot != null && slot < bars.length && bars[slot].stream) {
                 const el = bars[slot].stream;
