@@ -427,15 +427,13 @@
     return n + suffix + '.docx';
   }
 
-  /* 批量导出：使用抓取到的文章标题作为文件名（清理非法字符，超长截断，并附加重复率） */
-  function docxNameFromTitle(title, simPct) {
+  /* 批量导出：使用抓取到的文章标题作为文件名（清理非法字符，超长截断；不带重复率后缀） */
+  function docxNameFromTitle(title) {
     let n = String(title || '').replace(/\s+/g, ' ').trim();
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '无标题文章';
     if (n.length > 60) n = n.slice(0, 60);
-    let suffix = '';
-    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
-    return n + suffix + '.docx';
+    return n + '.docx';
   }
 
   /* 剔除「事实核查表」及其之后的所有内容（导出预览与 Word 共用） */
@@ -713,7 +711,7 @@
         const useTitleName = (typeof useTitleNameEnabled === 'function') ? useTitleNameEnabled() : false;
         // 命名优先级：文章标题 > 链接最后一段 URI > 正文前 10 字
         let docxName = useTitleName
-          ? docxNameFromTitle(data.title, sim != null ? sim : 1)
+          ? docxNameFromTitle(data.title)
           : useLinkName
             ? docxNameFromUrl(url, sim != null ? sim : 1)
             : docxNameFromText(out, data.title || ('文章' + idx), sim != null ? sim : 1);
