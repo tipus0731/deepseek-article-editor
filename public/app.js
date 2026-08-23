@@ -8,7 +8,7 @@ const els = {
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
   linkUrl: $('linkUrl'), fetchBtn: $('fetchBtn'), linkResult: $('linkResult'),
-  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'),
+  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'), imgPosChk: $('imgPosChk'),
   wordChips: $('wordChips'), wordInput: $('wordInput'), addWord: $('addWord'),
   loadPreset: $('loadPreset'), clearWords: $('clearWords'),
   style: $('style'), length: $('length'), targetLenField: $('targetLenField'),
@@ -1766,9 +1766,9 @@ function autoCropEnabled() {
 function useLinkNameEnabled() {
   return !!(els.useLinkNameChk && els.useLinkNameChk.checked);
 }
-/* 插图位置：paragraph=按原文段落插入 / end=全部追加到文章末尾 */
+/* 插图位置：勾选=按原文位置插入(paragraph) / 取消=全部追加到文章末尾(end) */
 function imagePlacementMode() {
-  return (els.imgPos && els.imgPos.value) || 'paragraph';
+  return (els.imgPosChk && els.imgPosChk.checked) ? 'paragraph' : 'end';
 }
 els.autoCropChk.addEventListener('change', () => {
   storeSet('dsw_autocrop', els.autoCropChk.checked ? '1' : '0');
@@ -1780,9 +1780,9 @@ if (els.useLinkNameChk) {
     storeSet('dsw_use_link_name', els.useLinkNameChk.checked ? '1' : '0');
   });
 }
-if (els.imgPos) {
-  els.imgPos.addEventListener('change', () => {
-    storeSet('dsw_img_pos', els.imgPos.value);
+if (els.imgPosChk) {
+  els.imgPosChk.addEventListener('change', () => {
+    storeSet('dsw_img_pos', els.imgPosChk.checked ? '1' : '0');
   });
 }
 {
@@ -1791,7 +1791,7 @@ if (els.imgPos) {
   const vn = storeGet('dsw_use_link_name');
   if (els.useLinkNameChk) els.useLinkNameChk.checked = vn === null ? false : vn === '1';
   const vp = storeGet('dsw_img_pos');
-  if (els.imgPos && (vp === 'paragraph' || vp === 'end')) els.imgPos.value = vp;
+  if (els.imgPosChk) els.imgPosChk.checked = vp === null ? true : vp === '1';
 }
 els.cropAllBtn.addEventListener('click', processAll);
 els.downloadAllBtn.addEventListener('click', downloadAll);

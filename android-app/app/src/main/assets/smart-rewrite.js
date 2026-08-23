@@ -407,12 +407,21 @@
     if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
     return n + suffix + '.docx';
   }
-  /* 批量导出：使用链接作为文件名（去掉协议头，非法字符替换为 _，并附加重复率） */
+  /* 批量导出：使用链接最后一段 URI 作为文件名（去掉常见网页扩展名，非法字符替换为 _，并附加重复率） */
   function docxNameFromUrl(url, simPct) {
-    let n = String(url || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    let n = '';
+    try {
+      const u = new URL(String(url || ''));
+      const segs = u.pathname.split('/').filter(Boolean);
+      n = segs.length ? segs[segs.length - 1] : (u.hostname || '');
+      try { n = decodeURIComponent(n); } catch (e) { /* 保持原样 */ }
+    } catch (e) {
+      n = String(url || '').replace(/^https?:\/\//i, '');
+    }
+    n = n.replace(/\.(html?|php|jsp|asp|aspx|shtml)$/i, ''); // 去掉常见网页扩展名
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '链接文章';
-    if (n.length > 80) n = n.slice(0, 80);
+    if (n.length > 60) n = n.slice(0, 60);
     let suffix = '';
     if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
     return n + suffix + '.docx';
