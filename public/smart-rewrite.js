@@ -464,13 +464,6 @@
     const p = h.byId.get(taskId);
     if (p && typeof p.onChunk === 'function' && chunk) p.onChunk(String(chunk));
   };
-  /* Java 流式增量回调：把 AI 已生成的增量文本推给对应任务的 onChunk（进度条实时显示） */
-  window.onNativeAiChunk = function (cbId, taskId, chunk) {
-    const h = nativeAiPending && nativeAiPending[cbId];
-    if (!h) return;
-    const p = h.byId.get(taskId);
-    if (p && typeof p.onChunk === 'function' && chunk) p.onChunk(String(chunk));
-  };
   window.onNativeAiResult = function (cbId, taskId, res) {
     const h = nativeAiPending && nativeAiPending[cbId];
     if (!h) return;
