@@ -772,6 +772,8 @@ async function streamRewrite(body, signal, out) {
         if (!out) {
           els.reasonText.appendChild(document.createTextNode(delta.reasoning_content));
           els.reasonBox.classList.remove('hidden');
+        } else if (typeof out.onReasoning === 'function') {
+          out.onReasoning(delta.reasoning_content);
         }
       }
       if (delta.content) {

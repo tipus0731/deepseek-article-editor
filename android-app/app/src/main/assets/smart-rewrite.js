@@ -458,11 +458,11 @@
   let nativeAiSeq = 0;
   const nativeAiPending = {}; // cbId -> state{ byId, total, done, timer, finish }
   /* Java 流式增量回调：把 AI 已生成的增量文本推给对应任务的 onChunk（进度条实时显示） */
-  window.onNativeAiChunk = function (cbId, taskId, chunk) {
+  window.onNativeAiChunk = function (cbId, taskId, o) {
     const h = nativeAiPending && nativeAiPending[cbId];
     if (!h) return;
     const p = h.byId.get(taskId);
-    if (p && typeof p.onChunk === 'function' && chunk) p.onChunk(String(chunk));
+    if (p && typeof p.onChunk === 'function' && o && (o.c || o.r)) p.onChunk({ content: o.c || '', reasoning: o.r || '' });
   };
   window.onNativeAiResult = function (cbId, taskId, res) {
     const h = nativeAiPending && nativeAiPending[cbId];
@@ -481,7 +481,7 @@
     return new Promise((batchResolve) => {
       const cbId = 'ai' + (++nativeAiSeq) + '_' + Date.now();
       const byId = new Map();
-      const proms = taskList.map((t) => new Promise((resolve, reject) => byId.set(t.id, { resolve, reject })));
+      const proms = taskList.map((t) => new Promise((resolve, reject) => byId.set(t.id, { resolve, reject, onChunk: t.onChunk })));
       const state = {
         byId, done: 0, total: taskList.length, timer: null,
         finish: () => { clearTimeout(state.timer); delete nativeAiPending[cbId]; batchResolve(); },
@@ -617,12 +617,14 @@
             id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
             concurrency: 1,
             displayStream: (slot != null && slot < bars.length),
-            onChunk: (t) => {
-              if (slot != null && slot < bars.length && bars[slot].stream) {
-                const el = bars[slot].stream;
-                el.textContent = ((el.textContent || '') + t).slice(-400);
-                el.scrollTop = el.scrollHeight;
-              }
+            onChunk: (o) => {
+              if (slot == null || slot >= bars.length || !bars[slot].stream) return;
+              const el = bars[slot].stream;
+              let add = '';
+              if (o.reasoning) add += '💭 ' + o.reasoning;
+              if (o.content) add += o.content;
+              el.textContent = ((el.textContent || '') + add).slice(-400);
+              el.scrollTop = el.scrollHeight;
             },
           }]);
           const one = (r && r[0]);
@@ -636,6 +638,13 @@
             if (slot != null && slot < bars.length && bars[slot].stream) {
               const el = bars[slot].stream;
               el.textContent = ((el.textContent || '') + t).slice(-400);
+              el.scrollTop = el.scrollHeight;
+            }
+          },
+          onReasoning: (t) => {
+            if (slot != null && slot < bars.length && bars[slot].stream) {
+              const el = bars[slot].stream;
+              el.textContent = ((el.textContent || '') + '💭' + t).slice(-400);
               el.scrollTop = el.scrollHeight;
             }
           },

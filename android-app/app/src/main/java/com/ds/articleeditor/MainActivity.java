@@ -306,7 +306,7 @@ public class MainActivity extends Activity {
             final boolean showStream = task.optBoolean("displayStream", true);
             String content = "";
             for (int tryNo = 1; tryNo <= 2; tryNo++) {
-                if (tryNo > 1 && showStream) jsAiStreamChunk(cbId, taskId, "\n—— 第 " + tryNo + " 次重试 ——\n");
+                if (tryNo > 1 && showStream) jsAiStreamChunk(cbId, taskId, "", "\n—— 第 " + tryNo + " 次重试 ——\n");
                 StringBuilder sb = new StringBuilder();
                 httpPostStream(apiBase + "/chat/completions", payload, apiKey, cbId, taskId, showStream, sb);
                 content = sb.toString();
@@ -358,33 +358,40 @@ public class MainActivity extends Activity {
                     BufferedReader br = new BufferedReader(new InputStreamReader(in, "UTF-8"));
                     String line;
                     long lastFlush = 0;
-                    StringBuilder disp = new StringBuilder();
+                    StringBuilder dispC = new StringBuilder(); // 正文增量缓冲
+                    StringBuilder dispR = new StringBuilder(); // 思考过程增量缓冲
                     while ((line = br.readLine()) != null) {
                         line = line.trim();
                         if (!line.startsWith("data:")) continue;
                         String data = line.substring(5).trim();
                         if (data.isEmpty()) continue;
                         if ("[DONE]".equals(data)) break;
-                        String piece = "";
+                        String pc = null, rc = null;
                         try {
                             JSONObject j = new JSONObject(data);
                             JSONArray ch = j.optJSONArray("choices");
                             if (ch != null && ch.length() > 0) {
                                 JSONObject delta = ch.getJSONObject(0).optJSONObject("delta");
-                                if (delta != null) { String pc = delta.optString("content", null); if (pc != null) piece = pc; }
+                                if (delta != null) {
+                                    pc = delta.optString("content", null);
+                                    rc = delta.optString("reasoning_content", null); // Pro 思考阶段的增量只有它
+                                }
                             }
                         } catch (Exception ignore) { }
-                        if (piece.isEmpty()) continue;
-                        out.append(piece);
-                        disp.append(piece);
+                        boolean hasC = pc != null && !pc.isEmpty();
+                        boolean hasR = rc != null && !rc.isEmpty();
+                        if (!hasC && !hasR) continue;
+                        if (hasC) out.append(pc); // 最终正文只累计 content
+                        if (hasC) dispC.append(pc);
+                        if (hasR) dispR.append(rc);
                         long now = System.currentTimeMillis();
-                        if (showStream && now - lastFlush >= streamFlushMs() && disp.length() > 0) { // 节流：并发越多回调越稀，保护 UI 线程
-                            jsAiStreamChunk(cbId, taskId, disp.toString());
-                            disp.setLength(0);
+                        if (showStream && now - lastFlush >= streamFlushMs() && (dispC.length() > 0 || dispR.length() > 0)) { // 节流：并发越多回调越稀，保护 UI 线程
+                            jsAiStreamChunk(cbId, taskId, dispC.toString(), dispR.toString());
+                            dispC.setLength(0); dispR.setLength(0);
                             lastFlush = now;
                         }
                     }
-                    if (showStream && disp.length() > 0) jsAiStreamChunk(cbId, taskId, disp.toString());
+                    if (showStream && (dispC.length() > 0 || dispR.length() > 0)) jsAiStreamChunk(cbId, taskId, dispC.toString(), dispR.toString());
                     br.close();
                     return;
                 } catch (Exception e) {
@@ -420,7 +427,7 @@ public class MainActivity extends Activity {
         }
 
         /** 流式增量回调：把 AI 已生成的增量文本推送给页面（进度条下方实时显示） */
-        private void jsAiStreamChunk(final String cbId, final String taskId, final String chunk) {
+        private void jsAiStreamChunk(final String cbId, final String taskId, final String cDelta, final String rDelta) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -428,7 +435,8 @@ public class MainActivity extends Activity {
                     String js = "window.onNativeAiChunk && window.onNativeAiChunk("
                             + JSONObject.quote(cbId == null ? "" : cbId) + ","
                             + JSONObject.quote(taskId == null ? "" : taskId) + ","
-                            + JSONObject.quote(chunk == null ? "" : chunk) + ")";
+                            + "{c:" + JSONObject.quote(cDelta == null ? "" : cDelta)
+                            + ",r:" + JSONObject.quote(rDelta == null ? "" : rDelta) + "})";
                     webView.evaluateJavascript(js, null);
                 }
             });
