@@ -457,6 +457,20 @@
   // DeepSeek / 自定义 OpenAI 兼容接口（非流式，每个线程同步等待全文返回），突破 WebView 同域连接数限制。
   let nativeAiSeq = 0;
   const nativeAiPending = {}; // cbId -> state{ byId, total, done, timer, finish }
+  /* Java 流式增量回调：把 AI 已生成的增量文本推给对应任务的 onChunk（进度条实时显示） */
+  window.onNativeAiChunk = function (cbId, taskId, chunk) {
+    const h = nativeAiPending && nativeAiPending[cbId];
+    if (!h) return;
+    const p = h.byId.get(taskId);
+    if (p && typeof p.onChunk === 'function' && chunk) p.onChunk(String(chunk));
+  };
+  /* Java 流式增量回调：把 AI 已生成的增量文本推给对应任务的 onChunk（进度条实时显示） */
+  window.onNativeAiChunk = function (cbId, taskId, chunk) {
+    const h = nativeAiPending && nativeAiPending[cbId];
+    if (!h) return;
+    const p = h.byId.get(taskId);
+    if (p && typeof p.onChunk === 'function' && chunk) p.onChunk(String(chunk));
+  };
   window.onNativeAiResult = function (cbId, taskId, res) {
     const h = nativeAiPending && nativeAiPending[cbId];
     if (!h) return;
@@ -606,10 +620,16 @@
       if (wait > 0) await sleep(wait);
       try {
         if (nativeAI) {
-          if (slot != null && slot < bars.length) bars[slot].stream.textContent = '🤖 原生通道请求中（非流式，等待完整返回）…';
           const r = await nativeAiBatch([{
             id: String(a.idx), apiKey, apiBase, model, messages: a.messages, reasoningEffort,
             concurrency: 1,
+            onChunk: (t) => {
+              if (slot != null && slot < bars.length && bars[slot].stream) {
+                const el = bars[slot].stream;
+                el.textContent = ((el.textContent || '') + t).slice(-400);
+                el.scrollTop = el.scrollHeight;
+              }
+            },
           }]);
           const one = (r && r[0]);
           if (one && one.__err) throw new Error(one.__err);

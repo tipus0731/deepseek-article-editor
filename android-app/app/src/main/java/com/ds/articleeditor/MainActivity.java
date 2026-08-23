@@ -21,10 +21,12 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -32,6 +34,7 @@ import java.net.URLDecoder;
 import java.util.LinkedHashSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -265,10 +268,13 @@ public class MainActivity extends Activity {
                         @Override
                         public void run() {
                             final String taskId = task.optString("id", String.valueOf(idx));
+                            activeStreams.incrementAndGet();
                             try {
-                                jsAiCallback(cbId, taskId, callAi(task));
+                                jsAiCallback(cbId, taskId, callAi(task, cbId, taskId));
                             } catch (Exception e) {
                                 jsAiCallback(cbId, taskId, "{\"ok\":false,\"error\":" + JSONObject.quote(String.valueOf(e.getMessage())) + "}");
+                            } finally {
+                                activeStreams.decrementAndGet();
                             }
                         }
                     });
@@ -278,8 +284,9 @@ public class MainActivity extends Activity {
             }
         }
 
-        /** 单篇 AI 调用（在 aiExecutor 线程执行）：组装 payload → 同步请求 → 返回结果 JSON */
-        private String callAi(JSONObject task) throws Exception {
+        /** 单篇 AI 调用（在 aiExecutor 线程执行）：流式请求（SSE），
+         *  增量内容通过 jsAiStreamChunk 实时回调页面显示到线程进度条下方 */
+        private String callAi(JSONObject task, final String cbId, final String taskId) throws Exception {
             String apiKey = task.optString("apiKey", "").trim();
             if (apiKey.isEmpty()) throw new Exception("未提供 API Key");
             String apiBase = task.optString("apiBase", "").trim();
@@ -289,31 +296,139 @@ public class MainActivity extends Activity {
             JSONObject payload = new JSONObject();
             payload.put("model", model);
             payload.put("messages", task.getJSONArray("messages"));
-            payload.put("stream", false);
+            payload.put("stream", true); // 流式：边生成边回传进度条
             payload.put("temperature", 1.0);
             if ("deepseek-v4-flash".equals(model)) payload.put("max_tokens", 8192);
             String effort = task.optString("reasoningEffort", "");
             if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
 
-            // 空内容自动重试：上游偶发返回 200 但 content 为 null（思考超限/中转站不兼容），重试通常能拿到内容
+            // 空内容自动重试：上游偶发返回 200 但无正文（思考超限/中转站不兼容），重试通常能拿到内容
             String content = "";
             for (int tryNo = 1; tryNo <= 3; tryNo++) {
-                String body = httpPostJson(apiBase + "/chat/completions", payload, apiKey);
-                JSONObject j = new JSONObject(body);
-                content = "";
-                JSONArray choices = j.optJSONArray("choices");
-                if (choices != null && choices.length() > 0) {
-                    JSONObject msg = choices.getJSONObject(0).optJSONObject("message");
-                    if (msg != null) {
-                        String c = msg.optString("content", null);
-                        if (c != null) content = c;
-                    }
-                }
+                if (tryNo > 1) jsAiStreamChunk(cbId, taskId, "\n—— 第 " + tryNo + " 次重试 ——\n");
+                StringBuilder sb = new StringBuilder();
+                httpPostStream(apiBase + "/chat/completions", payload, apiKey, cbId, taskId, sb);
+                content = sb.toString();
                 if (!content.trim().isEmpty()) break;
                 if (tryNo < 3) { try { Thread.sleep(1500L * tryNo); } catch (InterruptedException ie) { break; } }
             }
             if (content.trim().isEmpty()) throw new Exception("AI 返回空内容（已重试 3 次）");
             return "{\"ok\":true,\"text\":" + JSONObject.quote(content) + "}";
+        }
+
+        /** 流式 POST（SSE）：逐行解析 delta.content 增量写入 out，
+         *  并节流回调 jsAiStreamChunk 供线程进度条实时显示；
+         *  5xx/429/网络错误仍自动重试（最多 5 次）；流中途失败整体抛出由外层处理。 */
+        private void httpPostStream(String urlStr, JSONObject payload, String apiKey,
+                                    final String cbId, final String taskId,
+                                    final StringBuilder out) throws Exception {
+            Exception lastErr = null;
+            for (int attempt = 1; attempt <= 5; attempt++) {
+                HttpURLConnection conn = null;
+                try {
+                    conn = (HttpURLConnection) new URL(urlStr).openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(180000);
+                    conn.setInstanceFollowRedirects(true);
+                    conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                    conn.setRequestProperty("Accept", "text/event-stream");
+                    conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                    conn.setDoOutput(true);
+                    byte[] body = payload.toString().getBytes("UTF-8");
+                    try (OutputStream os = conn.getOutputStream()) { os.write(body); }
+                    int code = conn.getResponseCode();
+                    if ((code >= 500 || code == 429) && attempt < 5) {
+                        Thread.sleep((code == 429 ? 3000L : 1500L) * attempt);
+                        lastErr = new Exception("HTTP " + code);
+                        continue;
+                    }
+                    if (code < 200 || code >= 300) {
+                        String etext = readAll(conn.getErrorStream(), conn.getContentEncoding());
+                        String msg = etext;
+                        try { JSONObject e = new JSONObject(etext); if (e.optJSONObject("error") != null) msg = e.getJSONObject("error").optString("message", etext); } catch (Exception ignore) { }
+                        throw new Exception("HTTP " + code + "：" + (msg.length() > 300 ? msg.substring(0, 300) : msg));
+                    }
+                    InputStream in = conn.getInputStream();
+                    String enc = conn.getContentEncoding();
+                    if ("gzip".equalsIgnoreCase(enc) && in != null) in = new GZIPInputStream(in);
+                    BufferedReader br = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+                    String line;
+                    long lastFlush = 0;
+                    StringBuilder disp = new StringBuilder();
+                    while ((line = br.readLine()) != null) {
+                        line = line.trim();
+                        if (!line.startsWith("data:")) continue;
+                        String data = line.substring(5).trim();
+                        if (data.isEmpty()) continue;
+                        if ("[DONE]".equals(data)) break;
+                        String piece = "";
+                        try {
+                            JSONObject j = new JSONObject(data);
+                            JSONArray ch = j.optJSONArray("choices");
+                            if (ch != null && ch.length() > 0) {
+                                JSONObject delta = ch.getJSONObject(0).optJSONObject("delta");
+                                if (delta != null) { String pc = delta.optString("content", null); if (pc != null) piece = pc; }
+                            }
+                        } catch (Exception ignore) { }
+                        if (piece.isEmpty()) continue;
+                        out.append(piece);
+                        disp.append(piece);
+                        long now = System.currentTimeMillis();
+                        if (now - lastFlush >= streamFlushMs() && disp.length() > 0) { // 节流：并发越多回调越稀，保护 UI 线程
+                            jsAiStreamChunk(cbId, taskId, disp.toString());
+                            disp.setLength(0);
+                            lastFlush = now;
+                        }
+                    }
+                    if (disp.length() > 0) jsAiStreamChunk(cbId, taskId, disp.toString());
+                    br.close();
+                    return;
+                } catch (Exception e) {
+                    lastErr = e;
+                    if (attempt < 5) {
+                        try { Thread.sleep(attempt * 1500L); } catch (InterruptedException ie) { break; }
+                        continue;
+                    }
+                    throw e;
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+            }
+            throw (lastErr != null) ? lastErr : new Exception("流式请求失败");
+        }
+
+        /** 当前活跃流式任务数 → 回调节流间隔（并发越多间隔越长，保护 UI 线程） */
+        private static final AtomicInteger activeStreams = new AtomicInteger(0);
+        private long streamFlushMs() {
+            return Math.min(1500L, 250L * Math.max(1, activeStreams.get()));
+        }
+
+        /** 读全量文本（错误响应用） */
+        private String readAll(InputStream in, String enc) throws Exception {
+            if (in == null) return "";
+            if ("gzip".equalsIgnoreCase(enc)) in = new GZIPInputStream(in);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            in.close();
+            return new String(out.toByteArray(), "UTF-8");
+        }
+
+        /** 流式增量回调：把 AI 已生成的增量文本推送给页面（进度条下方实时显示） */
+        private void jsAiStreamChunk(final String cbId, final String taskId, final String chunk) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView == null) return;
+                    String js = "window.onNativeAiChunk && window.onNativeAiChunk("
+                            + JSONObject.quote(cbId == null ? "" : cbId) + ","
+                            + JSONObject.quote(taskId == null ? "" : taskId) + ","
+                            + JSONObject.quote(chunk == null ? "" : chunk) + ")";
+                    webView.evaluateJavascript(js, null);
+                }
+            });
         }
 
         private void jsAiCallback(final String cbId, final String taskId, final String payload) {
