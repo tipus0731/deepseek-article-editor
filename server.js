@@ -243,7 +243,7 @@ async function handleRewrite(req, res) {
     : DEEPSEEK_BASE;
   const effort = typeof body.reasoning_effort === 'string' ? body.reasoning_effort : '';
 
-  const payload = { model, messages: body.messages, stream: true, temperature: 1.0 };
+  const payload = { model, messages: body.messages, stream: true, temperature: 0.95 };
   payload.max_tokens = 131072; // 默认输出上限 128K（所有模型统一）
   if (effort && /^(low|medium|high)$/.test(effort)) payload.reasoning_effort = effort;
 

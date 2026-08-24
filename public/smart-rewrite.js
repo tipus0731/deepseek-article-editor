@@ -456,17 +456,24 @@
   // JS 一次性把全部改写任务交给 MainActivity 的 ExecutorService 多线程并发调用
   // DeepSeek / 自定义 OpenAI 兼容接口（非流式，每个线程同步等待全文返回），突破 WebView 同域连接数限制。
   let nativeAiSeq = 0;
-  const nativeAiPending = {}; // cbId -> state{ byId, total, done, timer, finish }
+  const nativeAiPending = {}; // cbId -> state{ byId, total, done, timer, lastActive, finish }
+  /* 原生 AI 空闲看门狗：替代旧的「240 秒一刀切」总时长限制。
+     只有连续 NATIVE_AI_IDLE_MS 毫秒收不到任何流式增量/结果回调才判定连接中断，
+     深度思考 + 长文等正常慢速生成不会被误杀。 */
+  const NATIVE_AI_IDLE_MS = 120000;        // 连续 120 秒无任何输出 → 判定中断
+  const NATIVE_AI_WATCHDOG_TICK_MS = 15000; // 每 15 秒巡检一次
   /* Java 流式增量回调：把 AI 已生成的增量文本推给对应任务的 onChunk（进度条实时显示） */
   window.onNativeAiChunk = function (cbId, taskId, o) {
     const h = nativeAiPending && nativeAiPending[cbId];
     if (!h) return;
+    h.lastActive = Date.now(); // 收到任何增量即视为连接存活，刷新看门狗
     const p = h.byId.get(taskId);
     if (p && typeof p.onChunk === 'function' && o && (o.c || o.r)) p.onChunk({ content: o.c || '', reasoning: o.r || '' });
   };
   window.onNativeAiResult = function (cbId, taskId, res) {
     const h = nativeAiPending && nativeAiPending[cbId];
     if (!h) return;
+    h.lastActive = Date.now();
     const p = h.byId.get(taskId);
     if (p) {
       h.byId.delete(taskId);
@@ -484,12 +491,16 @@
       const proms = taskList.map((t) => new Promise((resolve, reject) => byId.set(t.id, { resolve, reject, onChunk: t.onChunk })));
       const state = {
         byId, done: 0, total: taskList.length, timer: null,
-        finish: () => { clearTimeout(state.timer); delete nativeAiPending[cbId]; batchResolve(); },
+        lastActive: Date.now(),
+        finish: () => { clearInterval(state.timer); delete nativeAiPending[cbId]; batchResolve(); },
       };
-      state.timer = setTimeout(() => {
-        byId.forEach((p) => p.reject(new Error('原生 AI 调用超时（240 秒）')));
+      /* 空闲看门狗：周期巡检，仅在连续 NATIVE_AI_IDLE_MS 无任何输出时才拒绝剩余任务，
+         正在正常生成的任务永远不会被总时长误杀 */
+      state.timer = setInterval(() => {
+        if (Date.now() - state.lastActive < NATIVE_AI_IDLE_MS) return;
+        byId.forEach((p) => p.reject(new Error('原生 AI 调用超时（连续 ' + Math.round(NATIVE_AI_IDLE_MS / 1000) + ' 秒无输出，判定连接中断）')));
         state.finish();
-      }, 240000);
+      }, NATIVE_AI_WATCHDOG_TICK_MS);
       nativeAiPending[cbId] = state;
       window.AndroidBridge.batchAiRewrite(JSON.stringify(taskList), cbId);
       batchResolve(Promise.all(proms.map((p) => p.catch((e) => ({ __err: e.message })))));

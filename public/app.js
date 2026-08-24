@@ -657,7 +657,7 @@ async function streamRewrite(body, signal, out) {
     if (!/^https?:\/\//i.test(apiBase)) throw new Error('API 地址格式无效，需以 http(s):// 开头');
     // 已配置自定义模型名 → 使用自定义模型；否则用所选模型（思考开启且未自定义时兜底 Pro）
     const model = effectiveModel(body.model);
-    const payload = { model: model, messages: body.messages, stream: true, temperature: 1.0 };
+    const payload = { model: model, messages: body.messages, stream: true, temperature: 0.95 };
     payload.max_tokens = 131072; // 默认输出上限 128K（所有模型统一）
     // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-v4-pro 自带思考，不传该参数）
     if (els.thinking.checked && !/api\.deepseek\.com$/i.test(apiBase)) {
