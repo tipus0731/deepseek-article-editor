@@ -298,7 +298,7 @@ public class MainActivity extends Activity {
             payload.put("messages", task.getJSONArray("messages"));
             payload.put("stream", true); // 流式：边生成边回传进度条
             payload.put("temperature", 1.0);
-            if ("deepseek-v4-flash".equals(model)) payload.put("max_tokens", 8192);
+            payload.put("max_tokens", 131072); // 默认输出上限 128K（所有模型统一）
             String effort = task.optString("reasoningEffort", "");
             if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
 

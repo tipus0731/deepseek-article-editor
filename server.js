@@ -244,7 +244,7 @@ async function handleRewrite(req, res) {
   const effort = typeof body.reasoning_effort === 'string' ? body.reasoning_effort : '';
 
   const payload = { model, messages: body.messages, stream: true, temperature: 1.0 };
-  if (model === 'deepseek-v4-flash') payload.max_tokens = 8192; // v4-pro 使用其默认输出上限
+  payload.max_tokens = 131072; // 默认输出上限 128K（所有模型统一）
   if (effort && /^(low|medium|high)$/.test(effort)) payload.reasoning_effort = effort;
 
   // 5xx/429/网络错误自动重试（最多 5 次，指数退避，429 加倍），减少上游间歇性故障透传给前端

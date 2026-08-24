@@ -658,7 +658,7 @@ async function streamRewrite(body, signal, out) {
     // 已配置自定义模型名 → 使用自定义模型；否则用所选模型（思考开启且未自定义时兜底 Pro）
     const model = effectiveModel(body.model);
     const payload = { model: model, messages: body.messages, stream: true, temperature: 1.0 };
-    if (model === 'deepseek-v4-flash') payload.max_tokens = 8192;
+    payload.max_tokens = 131072; // 默认输出上限 128K（所有模型统一）
     // 自定义供应商：按档位发送思考强度（官方 DeepSeek 由 deepseek-v4-pro 自带思考，不传该参数）
     if (els.thinking.checked && !/api\.deepseek\.com$/i.test(apiBase)) {
       const map = { max: 'high', high: 'high', medium: 'medium', low: 'low' };
@@ -1092,7 +1092,7 @@ els.toggleKey.addEventListener('click', () => {
 // 不依赖「写入 storage 后立即再读取」的时序（兼容 Android 原生 pref 与网页 localStorage）。
 let promptGroupId = null;
 function fillPromptGroup(g) {
-  els.sysPrompt.value = (g && g.sys) || ''; // 图片嵌入提示词已移除（固定使用内置默认）
+  els.sysPrompt.value = String((g && g.sys) || '').slice(0, 8192); // 上限 8K 字符；旧数据超长时自动截断
   els.dedupPrompt.value = (g && g.dedup) || '';
 }
 function loadPromptSettings() {
