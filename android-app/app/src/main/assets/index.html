@@ -15,7 +15,7 @@
     <div>
       <div class="brand-title">
         <h1>文章助手</h1>
-        <span class="badge" title="版本号">v1.50</span>
+        <span class="badge" title="版本号">v1.51</span>
       </div>
       <p class="sub">粘贴文本或导入链接 → 按预设规则自动改写</p>
     </div>
@@ -70,17 +70,8 @@
               <option value="0">不限</option>
             </select>
           </label>
-          <label class="batch-name-chk" title="勾选后，批量导出的 Word 文件名使用对应链接（最后一段 URI），并把重复率加在后面">
-            <input type="checkbox" id="useLinkNameChk"> 链接作为文件名
-          </label>
-          <label class="batch-name-chk" title="勾选后，批量导出的 Word 文件名使用抓取到的文章标题，并把重复率加在后面（与「链接作为文件名」互斥，后勾选的生效）">
-            <input type="checkbox" id="useTitleNameChk"> 文章标题作为文件名
-          </label>
-          <label class="batch-name-chk" title="勾选 = 按原文图片所在位置插入（AI 保留 [图片] 标记时按标记，否则按原文锚点匹配）；取消 = 全部图片统一放到文章末尾">
-            <input type="checkbox" id="imgPosChk" checked> 图片按原文位置插入
-          </label>
         </div>
-        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>开启同数量的流水线（例如 4000 条链接选 10 = 同时处理 10 条，每篇由同一流水线串起 抓取→AI改写(≤5%判重)→导出Word，先完成先出文件，无需等全部抓完；选 不限 = 全部同时处理），默认文件名 = 正文前 10 字 + 重复率；可勾选「文章标题作为文件名」（用抓取到的标题命名）或「链接作为文件名」（用链接最后一段 URI 命名）+ 重复率，两者互斥、后勾选的生效。每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
+        <p class="hint">今日头条链接将提取正文与全部图片；图片水印在浏览器本地用 JS 裁切去除（不上传任何服务器）。支持一次粘贴多个链接（每行一个）：点击「并发批量生成 Word」会按右侧选定的<span class="warn">并发数量</span>开启同数量的流水线（例如 4000 条链接选 10 = 同时处理 10 条，每篇由同一流水线串起 抓取→AI改写(≤5%判重)→导出Word，先完成先出文件，无需等全部抓完；选 不限 = 全部同时处理），默认文件名 = 正文前 10 字 + 重复率；文件名与插图方式等导出选项已移至下方「✍️ 文章修改内容」区域设置。每条文章都嵌入自己的配图（默认自动去除水印）。动态渲染或被反爬的页面可能失败，失败时请直接复制粘贴文本。</p>
 
         <div id="linkArticle" class="hidden">
           <div class="article-meta">
@@ -191,6 +182,18 @@
         <label><input type="checkbox" id="optFact"> 保留事实数据，不编造内容</label>
       </div>
 
+      <div class="rule-block">
+        <div class="rule-head">
+          <h3>📤 导出与插图</h3>
+        </div>
+        <div class="checks">
+          <label title="勾选后，批量导出的 Word 文件名使用对应链接（最后一段 URI），并把重复率加在后面"><input type="checkbox" id="useLinkNameChk"> 链接作为文件名</label>
+          <label title="勾选后，批量导出的 Word 文件名使用抓取到的文章标题（与「链接作为文件名」「标题+重复率」互斥，后勾选的生效）"><input type="checkbox" id="useTitleNameChk"> 文章标题作为文件名</label>
+          <label title="勾选后，导出的 Word 文件名使用「标题+重复率」格式（如：标题_重复率12.3%.docx；与其他文件名选项互斥，后勾选的生效）"><input type="checkbox" id="useTitleSimChk"> 标题+重复率作为文件名</label>
+          <label title="勾选 = 按原文图片所在位置插入（AI 保留 [图片] 标记时按标记，否则按原文锚点匹配）；取消 = 全部图片统一放到文章末尾"><input type="checkbox" id="imgPosChk" checked> 图片按原文位置插入</label>
+        </div>
+      </div>
+
       <label class="field custom-req-field hidden">
         <span>✍️ 自定义修改要求（选填）</span>
         <textarea id="customReq" rows="2" placeholder="例如：删除第一段；结尾加上行动呼吁；突出环保主题；把全文改写为第三人称…"></textarea>
@@ -268,8 +271,8 @@
             </div>
           </div>
           <label class="field">
-            <span>系统提示词（角色设定）</span>
-            <textarea id="sysPrompt" rows="4" placeholder="留空使用内置默认提示词…"></textarea>
+            <span>用户提示词（角色设定，最多 8K 字符，加在文章之前作为用户输入）</span>
+            <textarea id="sysPrompt" rows="4" maxlength="8192" placeholder="留空使用内置默认提示词…"></textarea>
           </label>
           <label class="field">
             <span>降重提示词（{sim} 会被替换为当前重复度百分比）</span>
