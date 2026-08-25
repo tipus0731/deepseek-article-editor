@@ -468,7 +468,10 @@
     if (!h) return;
     h.lastActive = Date.now(); // 收到任何增量即视为连接存活，刷新看门狗
     const p = h.byId.get(taskId);
-    if (p && typeof p.onChunk === 'function' && o && (o.c || o.r)) p.onChunk({ content: o.c || '', reasoning: o.r || '' });
+    // 防御：过滤字面量 "null"（原生层 JSON null 被误拼为字符串 "null" 的残留防护）
+    const c = (o && o.c && o.c !== 'null') ? o.c : '';
+    const r = (o && o.r && o.r !== 'null') ? o.r : '';
+    if (p && typeof p.onChunk === 'function' && (c || r)) p.onChunk({ content: c, reasoning: r });
   };
   window.onNativeAiResult = function (cbId, taskId, res) {
     const h = nativeAiPending && nativeAiPending[cbId];

@@ -267,7 +267,7 @@ public class MainActivity extends Activity {
                     aiExecutor.execute(new Runnable() {
                         @Override
                         public void run() {
-                            final String taskId = task.optString("id", String.valueOf(idx));
+                            final String taskId = optStr(task, "id", String.valueOf(idx));
                             activeStreams.incrementAndGet();
                             try {
                                 jsAiCallback(cbId, taskId, callAi(task, cbId, taskId));
@@ -287,19 +287,19 @@ public class MainActivity extends Activity {
         /** 单篇 AI 调用（在 aiExecutor 线程执行）：流式请求（SSE），
          *  增量内容通过 jsAiStreamChunk 实时回调页面显示到线程进度条下方 */
         private String callAi(JSONObject task, final String cbId, final String taskId) throws Exception {
-            String apiKey = task.optString("apiKey", "").trim();
+            String apiKey = optStr(task, "apiKey", "").trim();
             if (apiKey.isEmpty()) throw new Exception("未提供 API Key");
-            String apiBase = task.optString("apiBase", "").trim();
+            String apiBase = optStr(task, "apiBase", "").trim();
             if (apiBase.isEmpty()) apiBase = "https://api.deepseek.com";
             if (!apiBase.startsWith("http")) throw new Exception("API 地址格式无效");
-            String model = task.optString("model", "deepseek-v4-flash");
+            String model = optStr(task, "model", "deepseek-v4-flash");
             JSONObject payload = new JSONObject();
             payload.put("model", model);
             payload.put("messages", task.getJSONArray("messages"));
             payload.put("stream", true); // 流式：边生成边回传进度条
             payload.put("temperature", 0.95);
             payload.put("max_tokens", 131072); // 默认输出上限 128K（所有模型统一）
-            String effort = task.optString("reasoningEffort", "");
+            String effort = optStr(task, "reasoningEffort", "");
             if (!effort.isEmpty()) payload.put("reasoning_effort", effort);
 
             // 空内容自动重试：上游偶发返回 200 但无正文（思考超限/中转站不兼容），重试通常能拿到内容
@@ -349,7 +349,7 @@ public class MainActivity extends Activity {
                     if (code < 200 || code >= 300) {
                         String etext = readAll(conn.getErrorStream(), conn.getContentEncoding());
                         String msg = etext;
-                        try { JSONObject e = new JSONObject(etext); if (e.optJSONObject("error") != null) msg = e.getJSONObject("error").optString("message", etext); } catch (Exception ignore) { }
+                        try { JSONObject e = new JSONObject(etext); if (e.optJSONObject("error") != null) msg = optStr(e.getJSONObject("error"), "message", etext); } catch (Exception ignore) { }
                         throw new Exception("HTTP " + code + "：" + (msg.length() > 300 ? msg.substring(0, 300) : msg));
                     }
                     InputStream in = conn.getInputStream();
@@ -373,8 +373,10 @@ public class MainActivity extends Activity {
                             if (ch != null && ch.length() > 0) {
                                 JSONObject delta = ch.getJSONObject(0).optJSONObject("delta");
                                 if (delta != null) {
-                                    pc = delta.optString("content", null);
-                                    rc = delta.optString("reasoning_content", null); // Pro 思考阶段的增量只有它
+                                    // 用 optStr 防 "null" 字面量：DeepSeek Pro 思考阶段 delta.content 为 JSON null，
+                                    // optString 会把它变成字符串 "null" 并 append 进正文（正文/导出/文件名大量 null 的根因）
+                                    pc = optStr(delta, "content", null);
+                                    rc = optStr(delta, "reasoning_content", null); // Pro 思考阶段的增量只有它
                                 }
                             }
                         } catch (Exception ignore) { }
@@ -412,6 +414,18 @@ public class MainActivity extends Activity {
         private static final AtomicInteger activeStreams = new AtomicInteger(0);
         private long streamFlushMs() {
             return Math.min(2500L, Math.max(500L, 400L * Math.max(1, activeStreams.get())));
+        }
+
+        /** 防 "null" 字面量读取：org.json 的 optString 遇到 JSON null 值会返回字符串 "null"，
+         *  直接 append/拼接会把 null 垃圾写进正文、导出文件与文件名（大量 null、nullnull 文件名）。
+         *  isNull 同时覆盖「键缺失」与「值为 JSON null」两种情况。 */
+        private String optStr(JSONObject o, String key, String fallback) {
+            if (o == null) return fallback;
+            return o.isNull(key) ? fallback : o.optString(key, fallback);
+        }
+        private String optStr(JSONArray a, int i, String fallback) {
+            if (a == null) return fallback;
+            return a.isNull(i) ? fallback : a.optString(i, fallback);
         }
 
         /** 读全量文本（错误响应用） */
@@ -497,7 +511,7 @@ public class MainActivity extends Activity {
                         String msg = text;
                         try {
                             JSONObject e = new JSONObject(text);
-                            if (e.optJSONObject("error") != null) msg = e.getJSONObject("error").optString("message", text);
+                            if (e.optJSONObject("error") != null) msg = optStr(e.getJSONObject("error"), "message", text);
                         } catch (Exception ignore) { }
                         throw new Exception("HTTP " + code + "：" + (msg.length() > 300 ? msg.substring(0, 300) : msg));
                     }
@@ -549,26 +563,26 @@ public class MainActivity extends Activity {
                                     JSONObject root = new JSONObject(body);
                                     if (root.has("data")) {
                                         JSONObject d = root.getJSONObject("data");
-                                        String content = d.optString("content", "");
-                                        String title = d.optString("title", "");
+                                        String content = optStr(d, "content", "");
+                                        String title = optStr(d, "title", "");
                                         JSONArray extraImgs = null;
                                         // 微头条（/w/ 链接）：正文在 thread.thread_base（纯文本），图片在 large_image_list
                                         if (content == null || content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
                                             if (d.has("thread")) {
                                                 JSONObject tb = d.getJSONObject("thread").optJSONObject("thread_base");
                                                 if (tb != null) {
-                                                    String c2 = tb.optString("content", "");
-                                                    if (c2 == null || c2.trim().isEmpty()) c2 = tb.optString("title", "");
+                                                    String c2 = optStr(tb, "content", "");
+                                                    if (c2 == null || c2.trim().isEmpty()) c2 = optStr(tb, "title", "");
                                                     content = c2 == null ? "" : c2;
-                                                    if (title == null || title.trim().isEmpty()) title = tb.optString("title", "");
+                                                    if (title == null || title.trim().isEmpty()) title = optStr(tb, "title", "");
                                                     JSONArray lil = tb.optJSONArray("large_image_list");
                                                     if (lil != null) {
                                                         extraImgs = new JSONArray();
                                                         for (int i = 0; i < lil.length(); i++) {
                                                             String u;
                                                             JSONObject o = lil.optJSONObject(i);
-                                                            if (o != null) u = o.optString("url", "");
-                                                            else u = lil.optString(i, "");
+                                                            if (o != null) u = optStr(o, "url", "");
+                                                            else u = optStr(lil, i, "");
                                                             if (!u.isEmpty() && u.startsWith("http")
                                                                     && !u.toLowerCase().contains("emoji")
                                                                     && !u.toLowerCase().contains("logo")
@@ -587,8 +601,8 @@ public class MainActivity extends Activity {
                                             if (extraImgs != null && extraImgs.length() > 0) {
                                                 LinkedHashSet<String> seen = new LinkedHashSet<>();
                                                 JSONArray curImgs = res.optJSONArray("images");
-                                                if (curImgs != null) for (int i = 0; i < curImgs.length(); i++) seen.add(curImgs.optString(i, ""));
-                                                for (int i = 0; i < extraImgs.length(); i++) seen.add(extraImgs.optString(i, ""));
+                                                if (curImgs != null) for (int i = 0; i < curImgs.length(); i++) seen.add(optStr(curImgs, i, ""));
+                                                for (int i = 0; i < extraImgs.length(); i++) seen.add(optStr(extraImgs, i, ""));
                                                 JSONArray merged = new JSONArray();
                                                 for (String s : seen) { if (merged.length() >= 30) break; merged.put(s); }
                                                 res.put("images", merged);
@@ -785,9 +799,9 @@ public class MainActivity extends Activity {
             JSONObject root = new JSONObject(decoded);
             JSONObject info = root.has("articleInfo") ? root.getJSONObject("articleInfo") : null;
             if (info == null) return null;
-            String content = info.optString("content", "");
+            String content = optStr(info, "content", "");
             if (content.trim().isEmpty() || content.replaceAll("<[^>]+>", "").trim().isEmpty()) return null;
-            return extractToutiaoHtmlContent(content, info.optString("title", ""));
+            return extractToutiaoHtmlContent(content, optStr(info, "title", ""));
         }
 
         private String detectCharset(String contentType, byte[] bytes) {
