@@ -268,7 +268,13 @@
         const pngImages = await preparePngImages(articleImages || []);
         const blocks = blocksWithImages(lastOriginal, text, pngImages);
         const buffer = buildDocx('生成文章', blocks);
-        const name = docxNameFromText(text, '生成文章', lastSim);
+        // 「标题+重复率」勾选且当前有文章标题时优先使用该格式（无标题则回退默认命名）
+        const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
+        const titleEl = document.getElementById('linkTitle');
+        const articleTitle = (titleEl && String(titleEl.textContent || '').trim()) || '';
+        const name = (useTitleSimName && articleTitle)
+          ? docxNameFromTitle(articleTitle, lastSim)
+          : docxNameFromText(text, '生成文章', lastSim);
         await downloadDocx(buffer, name);
         logAuto('💾 已保存：' + name);
       } catch (e) {
@@ -427,12 +433,14 @@
     return n + suffix + '.docx';
   }
 
-  /* 批量导出：使用抓取到的文章标题作为文件名（清理非法字符，超长截断；不带重复率后缀） */
-  function docxNameFromTitle(title) {
+  /* 使用文章标题作为文件名（清理非法字符，超长截断）；
+     simPct 传入时追加重复率后缀，用于「标题+重复率」命名格式 */
+  function docxNameFromTitle(title, simPct) {
     let n = String(title || '').replace(/\s+/g, ' ').trim();
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '无标题文章';
     if (n.length > 60) n = n.slice(0, 60);
+    if (simPct != null) n += '_重复率' + (simPct * 100).toFixed(1) + '%';
     return n + '.docx';
   }
 
@@ -748,12 +756,15 @@
         const blocks = blocksWithImages(articleText, out, pngImages);
         const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
         const useTitleName = (typeof useTitleNameEnabled === 'function') ? useTitleNameEnabled() : false;
-        // 命名优先级：文章标题 > 链接最后一段 URI > 正文前 10 字
-        let docxName = useTitleName
-          ? docxNameFromTitle(data.title)
-          : useLinkName
-            ? docxNameFromUrl(url, sim != null ? sim : 1)
-            : docxNameFromText(out, data.title || ('文章' + idx), sim != null ? sim : 1);
+        const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
+        // 命名优先级：标题+重复率 > 文章标题 > 链接最后一段 URI > 正文前 10 字
+        let docxName = useTitleSimName
+          ? docxNameFromTitle(data.title, sim != null ? sim : 1)
+          : useTitleName
+            ? docxNameFromTitle(data.title)
+            : useLinkName
+              ? docxNameFromUrl(url, sim != null ? sim : 1)
+              : docxNameFromText(out, data.title || ('文章' + idx), sim != null ? sim : 1);
         if (usedNames.has(docxName)) {
           const dot = docxName.lastIndexOf('.');
           const ext = dot >= 0 ? docxName.slice(dot) : '';

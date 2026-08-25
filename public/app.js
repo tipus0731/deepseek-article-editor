@@ -8,7 +8,7 @@ const els = {
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
   linkUrl: $('linkUrl'), fetchBtn: $('fetchBtn'), linkResult: $('linkResult'),
-  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'), useTitleNameChk: $('useTitleNameChk'), imgPosChk: $('imgPosChk'),
+  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'), useTitleNameChk: $('useTitleNameChk'), useTitleSimChk: $('useTitleSimChk'), imgPosChk: $('imgPosChk'),
   wordChips: $('wordChips'), wordInput: $('wordInput'), addWord: $('addWord'),
   loadPreset: $('loadPreset'), clearWords: $('clearWords'),
   style: $('style'), length: $('length'), targetLenField: $('targetLenField'),
@@ -617,10 +617,13 @@ function buildMessages(text) {
     rules.push('目标读者：面向「' + (audienceMap[els.audience.value] || '普通大众') + '」，据此调整用词深浅与解释详略。');
   }
 
-  // 底层提示词组永远生效：追加在用户当前组的系统提示词之后（不替换、不覆盖、隐藏不展示）
-  const system = getSysPrompt() + '\n\n' + BOTTOM_SYS_PROMPT;
+  // 提示词组：作为用户输入放在文章之前（不再作为系统提示词）；
+  // 底层降重要求（隐藏、不可关闭）仍保留为系统提示词
+  const system = BOTTOM_SYS_PROMPT;
+  const groupPrompt = getSysPrompt();
 
   const user =
+    (groupPrompt ? '【用户提示词】\n' + groupPrompt + '\n\n' : '') +
     '请根据以下规则修改文章：\n' +
     rules.map((r, i) => (i + 1) + '. ' + r).join('\n') +
     '\n\n--- 文章开始 ---\n' + text + '\n--- 文章结束 ---';
@@ -1785,9 +1788,13 @@ function autoCropEnabled() {
 function useLinkNameEnabled() {
   return !!(els.useLinkNameChk && els.useLinkNameChk.checked);
 }
-/* 批量导出：是否使用文章标题作为 Word 文件名（与链接文件名互斥，后勾选的生效） */
+/* 批量导出：是否使用文章标题作为 Word 文件名（与链接文件名、标题+重复率互斥，后勾选的生效） */
 function useTitleNameEnabled() {
   return !!(els.useTitleNameChk && els.useTitleNameChk.checked);
+}
+/* 导出 Word 文件名：使用「标题+重复率」格式（与其他文件名选项互斥，后勾选的生效） */
+function useTitleSimNameEnabled() {
+  return !!(els.useTitleSimChk && els.useTitleSimChk.checked);
 }
 /* 插图位置：勾选=按原文位置插入(paragraph) / 取消=全部追加到文章末尾(end) */
 function imagePlacementMode() {
@@ -1801,20 +1808,48 @@ els.autoCropChk.addEventListener('change', () => {
 if (els.useLinkNameChk) {
   els.useLinkNameChk.addEventListener('change', () => {
     storeSet('dsw_use_link_name', els.useLinkNameChk.checked ? '1' : '0');
-    // 互斥：勾选链接文件名时取消标题文件名
-    if (els.useLinkNameChk.checked && els.useTitleNameChk && els.useTitleNameChk.checked) {
-      els.useTitleNameChk.checked = false;
-      storeSet('dsw_use_title_name', '0');
+    // 互斥：勾选链接文件名时取消标题文件名与「标题+重复率」
+    if (els.useLinkNameChk.checked) {
+      if (els.useTitleNameChk && els.useTitleNameChk.checked) {
+        els.useTitleNameChk.checked = false;
+        storeSet('dsw_use_title_name', '0');
+      }
+      if (els.useTitleSimChk && els.useTitleSimChk.checked) {
+        els.useTitleSimChk.checked = false;
+        storeSet('dsw_use_title_sim', '0');
+      }
     }
   });
 }
 if (els.useTitleNameChk) {
   els.useTitleNameChk.addEventListener('change', () => {
     storeSet('dsw_use_title_name', els.useTitleNameChk.checked ? '1' : '0');
-    // 互斥：勾选标题文件名时取消链接文件名
-    if (els.useTitleNameChk.checked && els.useLinkNameChk && els.useLinkNameChk.checked) {
-      els.useLinkNameChk.checked = false;
-      storeSet('dsw_use_link_name', '0');
+    // 互斥：勾选标题文件名时取消链接文件名与「标题+重复率」
+    if (els.useTitleNameChk.checked) {
+      if (els.useLinkNameChk && els.useLinkNameChk.checked) {
+        els.useLinkNameChk.checked = false;
+        storeSet('dsw_use_link_name', '0');
+      }
+      if (els.useTitleSimChk && els.useTitleSimChk.checked) {
+        els.useTitleSimChk.checked = false;
+        storeSet('dsw_use_title_sim', '0');
+      }
+    }
+  });
+}
+if (els.useTitleSimChk) {
+  els.useTitleSimChk.addEventListener('change', () => {
+    storeSet('dsw_use_title_sim', els.useTitleSimChk.checked ? '1' : '0');
+    // 互斥：勾选「标题+重复率」时取消链接文件名与纯标题文件名
+    if (els.useTitleSimChk.checked) {
+      if (els.useLinkNameChk && els.useLinkNameChk.checked) {
+        els.useLinkNameChk.checked = false;
+        storeSet('dsw_use_link_name', '0');
+      }
+      if (els.useTitleNameChk && els.useTitleNameChk.checked) {
+        els.useTitleNameChk.checked = false;
+        storeSet('dsw_use_title_name', '0');
+      }
     }
   });
 }
@@ -1830,6 +1865,8 @@ if (els.imgPosChk) {
   if (els.useLinkNameChk) els.useLinkNameChk.checked = vn === null ? false : vn === '1';
   const vt = storeGet('dsw_use_title_name');
   if (els.useTitleNameChk) els.useTitleNameChk.checked = vt === null ? false : vt === '1';
+  const vs = storeGet('dsw_use_title_sim');
+  if (els.useTitleSimChk) els.useTitleSimChk.checked = vs === '1';
   const vp = storeGet('dsw_img_pos');
   if (els.imgPosChk) els.imgPosChk.checked = vp === null ? true : vp === '1';
 }
