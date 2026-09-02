@@ -1440,27 +1440,83 @@ window.onNativeFetchArticle = function (cbId, data) {
 };
 
 
-/* ================= 判重（仿文皮皮·河图引擎思路：全文文本相似度） =================
- * 文皮皮原理：找出两篇文章“相同的地方”，相同内容占比即相似度（越大越抄袭）。
- * 本地实现：字符 8-gram 公共成分 + Jaccard（0~1），×100 即重复度百分比。
+/* ================= 判重（与文皮皮·河图引擎 v2024111101 完全一致） =================
+ * 文皮皮原理：找出两篇文章“相同的地方”——基于逐字符 diff 的编辑距离：
+ *   相似度 = 100 - 编辑距离 / max(原文长, 对比文长) × 100
+ * 与 wenpipi.com/sim 相同，取值可达 [-100%, +100%]：两文差异大且一长一短时，
+ * 编辑距离可超过较长文本长度，结果为负（越小越原创，越大越抄袭，负数不做截断）。
+ * 挡位（与文皮皮相同，可在查重面板切换）：
+ *   1 一挡：全文 diff（checklines 行模式，速度快，wenpipi.com/sim 页面默认挡位）
+ *   2 二挡：全文 diff（字符模式，更精细）
+ *   3 三挡：先做段落级检测，只要存在 >20 字段落对相似度 ≥70% 即直接返回该段落
+ *           相似度（“对比文与原文有一个段落非常相似”），否则退回全文 diff。
+ * 返回值归一化为 0~1（可为负），×100 即重复度百分比；textSimilarity.last / .note 附带原始百分比与段落提示。
  */
-function makeGrams(text, n) {
-  const k = n || 4;
-  const clean = String(text || '').replace(/\s+/g, '');
-  const s = new Set();
-  if (!clean) return s;
-  if (clean.length <= k) { s.add(clean); return s; }
-  for (let i = 0; i <= clean.length - k; i++) s.add(clean.slice(i, i + k));
-  return s;
+function hetuLevelGet() {
+  let v = 1;
+  try {
+    const s = storeGet('hetuLevel');
+    if (s === '2' || s === '3') v = +s;
+  } catch (e) { /* keep 1 */ }
+  return v;
 }
-function textSimilarity(a, b) {
-  const A = makeGrams(a), B = makeGrams(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  const [small, big] = A.size <= B.size ? [A, B] : [B, A];
-  for (const g of small) if (big.has(g)) inter++;
-  return inter / (A.size + B.size - inter); // Jaccard
+function hetuSplitParagraphs(text) {
+  const parts = String(text).split(/(\r\n|\r|\n)/);
+  const out = [];
+  for (const p of parts) {
+    const t = p.replace(/^\s+|\s+$/g, '');
+    if (t) out.push(t);
+  }
+  return out;
 }
+function hetuParagraphMatch(t1, t2) {
+  const dps = new diff_match_patch();
+  dps.Diff_Timeout = 0;
+  const p1 = hetuSplitParagraphs(t1), p2 = hetuSplitParagraphs(t2);
+  for (const a of p1) {
+    for (const b of p2) {
+      if (a.length > 20 && b.length > 20) {
+        const d = dps.diff_main(a, b, true);
+        const sim = parseFloat((100 - dps.diff_levenshtein(d) / Math.max(a.length, b.length) * 100).toFixed(2));
+        if (sim >= 70) return { sim, html: dps.diff_prettyHtml(d) };
+      }
+    }
+  }
+  return null;
+}
+function textSimilarity(a, b, levelArg) {
+  const t1 = String(a == null ? '' : a).trim();
+  const t2 = String(b == null ? '' : b).trim();
+  const level = levelArg != null ? +levelArg : hetuLevelGet();
+  let sim = null;
+  textSimilarity.note = null;
+  if (t1.indexOf(t2) !== -1 || t2.indexOf(t1) !== -1) {
+    sim = 100;
+  } else if (level === 3) {
+    const pm = hetuParagraphMatch(t1, t2);
+    if (pm) {
+      sim = pm.sim;
+      textSimilarity.note = '对比文与原文有一个段落非常相似：(相似度' + pm.sim + '%)';
+    }
+  }
+  if (sim == null) {
+    const dps = new diff_match_patch();
+    dps.Diff_Timeout = 0;
+    const checklines = level === 1 ? true : (level === 2 || level === 3) ? false : true;
+    const d = dps.diff_main(t1, t2, checklines);
+    sim = parseFloat((100 - dps.diff_levenshtein(d) / Math.max(t1.length, t2.length) * 100).toFixed(2));
+  }
+  textSimilarity.last = sim;
+  return sim / 100;
+}
+
+/* 判重挡位切换（与 wenpipi.com/sim 的「缸·河图引擎·挡位」一致，默认一挡） */
+(function initHetuLevelSel() {
+  const sel = $('hetuLevelSel');
+  if (!sel) return;
+  sel.value = String(hetuLevelGet());
+  sel.addEventListener('change', () => { storeSet('hetuLevel', sel.value); });
+})();
 
 /* ================= 最小 .docx 生成器（纯 JS，STORE zip，无依赖） ================= */
 const CRC_TABLE = (() => {
