@@ -31,13 +31,17 @@
     return blocks;
   }
 
-  /* 归一化正文文本（与导出 Word 正文同源；判重两侧都必须经过它）：
-   * - 去掉 [图片]/【图片】 占位标记（发布正文不含它们）
-   * - 空行压缩、每段 trim、去掉 Markdown 标题符号 —— 与 splitTextBlocks 完全一致
-   * Word 正文 = 本函数输出（图片块不产生文字），用户在 wenpipi.com/sim 上粘贴的正是它；
-   * 原文侧同样经过本函数，保证「文件名/界面重复率 = 无标记原文 vs Word 正文的相似度」。 */
-  function exportTextOf(text) {
-    return splitTextBlocks(text).map((b) => b.text).join('\n');
+  /* 判重用「纯文本内容」（与 wenpipi.com/sim 的纯文本粘贴结果一致）：
+   * - 去掉 [图片]/【图片】 占位标记（图片内容与占位符都不参与重复率）
+   * - 忽略换行与连续空白：只比较「文字内容」，不比较排版（段落换行、
+ 差异均不影响）
+   * 这样「重复率」= 用户把「无标记原文 + Word 正文(纯文本复制)」粘到文皮皮·河图引擎的结果，
+   * 不再受段落换行/Word 复制换行符等版面差异影响。 */
+  function pureText(text) {
+    return String(text || '')
+      .replace(/\[图片\]|【图片】/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   /* 图片插入（混合算法，修复部分文章图片位置错乱）：
@@ -360,9 +364,9 @@
         if (!got) { finalText = ''; finalSim = 1; logAuto('⚠ AI 连续 3 次返回空内容'); break; }
 
         finalText = cutFactCheck(outputText); // 先剔除「事实核查表」及之后内容（预览/导出共用）
-        // 判重 = 原文(去除[图片]标记/规范空白后的发布形态) vs 导出 Word 正文，两边走同一条规范化管线：
-        // 保证「重复率」与用户把「无[图片]的原文 + Word 正文」粘到 wenpipi.com/sim 得到的相似度一致。
-        const sim = textSimilarity(exportTextOf(original), exportTextOf(finalText));
+        // 判重 = 原文 vs 导出 Word 正文，两侧都用「纯文本内容」（忽略换行/空白/图片占位符），
+        // 与用户把「无图片标记原文 + Word 正文纯文本」粘到 wenpipi.com/sim 的结果一致。
+        const sim = textSimilarity(pureText(original), pureText(finalText));
         finalSim = sim;
         const pct = (sim * 100).toFixed(1);
         updateSimDisplay(attempt, parseFloat(pct));
@@ -754,9 +758,9 @@
           const cut = cutFactCheck(out);
           if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
           out = cut;
-          // 与单篇模式一致：原文与改写都走同一条规范化管线（去图片标记/压缩空白/剔除事实核查表），
-          // 保证文件名重复率 = 用户把「无[图片]的原文 + Word 正文」粘到 wenpipi.com/sim 得到的相似度
-          sim = textSimilarity(exportTextOf(articleText), exportTextOf(out));
+          // 与单篇模式一致：两侧都用「纯文本内容」（忽略换行/空白/图片占位符、剔除事实核查表），
+          // 保证文件名重复率 = 用户把「无图片标记原文 + Word 正文纯文本」粘到 wenpipi.com/sim 的结果
+          sim = textSimilarity(pureText(articleText), pureText(out));
           const pct = (sim * 100).toFixed(1);
           logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
             + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : '')
