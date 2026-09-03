@@ -791,7 +791,7 @@
         }
         usedNames.add(docxName);
         const docxBuf = buildDocx(data.title || '生成文章', blocks);
-        logAuto('📄 [第 ' + idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(1) + '%，' + pngImages.length + ' 张图片）…');
+        logAuto('📄 [第 ' + idx + ' 篇] 保存 Word：' + docxName + '（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%，' + pngImages.length + ' 张图片）…');
 
         setStage('📦 生成 Word 中…', 92, docxName);
         await downloadDocx(docxBuf, docxName);
