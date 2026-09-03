@@ -1,7 +1,7 @@
 /* ================= 智能改写 + 自动判重 + 预览 + 保存 Word（依赖 app.js 的全局函数） =================
  * 规则：最多尝试 3 次；重复度 ≤5% 达标；>5% 自动带降重要要求重写（最多 3 次后不再尝试）。
  * 完成后：显示含图片的导出预览 + 保存按钮（Android Word 存 下载/文章助手，网页存浏览器下载目录）。
- * 判重 = 全文文本相似度（文皮皮思路，字符 8-gram Jaccard）。
+ * 判重 = 全文文本相似度（文皮皮·河图引擎同款：逐字符 diff 编辑距离相似度，默认一挡，可为负值）。
  */
 (function () {
   'use strict';
@@ -29,6 +29,14 @@
       else blocks.push({ type: 'p', text: p });
     }
     return blocks;
+  }
+
+  /* 导出正文文本（与 Word 正文完全一致，判重必须用它）：
+   * Word 正文 = splitTextBlocks 的段落文本（图片块不产生文字），因此导出文章在
+   * wenpipi.com/sim 上检测时看到的文本正是 exportTextOf 的结果；
+   * 用它判重 + 用同值命名，才能保证「文件名重复率 = Word 内文章 vs 原文的相似度」。 */
+  function exportTextOf(text) {
+    return splitTextBlocks(text).map((b) => b.text).join('\n');
   }
 
   /* 图片插入（混合算法，修复部分文章图片位置错乱）：
@@ -350,9 +358,11 @@
         }
         if (!got) { finalText = ''; finalSim = 1; logAuto('⚠ AI 连续 3 次返回空内容'); break; }
 
-        const sim = textSimilarity(original, outputText);
+        finalText = cutFactCheck(outputText); // 先剔除「事实核查表」及之后内容（预览/导出共用）
+        // 判重基于「导出 Word 中的实际正文」：先剔除事实核查表、再去图片标记/空行压缩等规范化，
+        // 保证「重复率」与用户把导出 Word 正文粘到 wenpipi.com/sim 得到的相似度一致。
+        const sim = textSimilarity(original, exportTextOf(finalText));
         finalSim = sim;
-        finalText = cutFactCheck(outputText); // 剔除「事实核查表」及之后内容（预览/导出用）
         const pct = (sim * 100).toFixed(1);
         updateSimDisplay(attempt, parseFloat(pct));
         logAuto('本次重复度：' + pct + '% （目标 ≤5%，>5% 自动降重重写）');
@@ -743,7 +753,8 @@
           const cut = cutFactCheck(out);
           if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
           out = cut;
-          sim = textSimilarity(articleText, out);
+          // 与单篇模式一致：按「导出 Word 正文」判重（剔除事实核查表 + 规范化后），保证文件名重复率即 Word 内文章的真实相似度
+          sim = textSimilarity(articleText, exportTextOf(out));
           const pct = (sim * 100).toFixed(1);
           logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
             + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : '')
