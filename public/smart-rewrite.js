@@ -16,7 +16,7 @@
     let user = baseMsgs[1].content;
     user += '\n\n【图片处理】' + getImgPrompt();
     if (prevSim != null) {
-      user += '\n\n' + getDedupPrompt().replace('{sim}', (prevSim * 100).toFixed(1));
+      user += '\n\n' + getDedupPrompt().replace('{sim}', (prevSim * 100).toFixed(2));
     }
     return [{ role: 'system', content: baseMsgs[0].content }, { role: 'user', content: user }];
   }
@@ -368,7 +368,7 @@
         // 与用户把「无图片标记原文 + Word 正文纯文本」粘到 wenpipi.com/sim 的结果一致。
         const sim = textSimilarity(pureText(original), pureText(finalText));
         finalSim = sim;
-        const pct = (sim * 100).toFixed(1);
+        const pct = (sim * 100).toFixed(2);
         updateSimDisplay(attempt, parseFloat(pct));
         logAuto('本次重复度：' + pct + '% （目标 ≤5%，>5% 自动降重重写）');
 
@@ -396,7 +396,7 @@
       lastDocx = { buffer: docxBuf, name: name };
       updateSaveHint();
       logAuto('📄 预览已生成：' + blocks.length + ' 个内容块（含图片 ' + pngImages.length + ' 张）。点击「💾 导出 Word 文档」保存。');
-      setStatus('✅ 完成：重复度 ' + (finalSim * 100).toFixed(1) + '%（' + attemptsUsed + '/3 次尝试），可预览并保存 Word');
+      setStatus('✅ 完成：重复度 ' + (finalSim * 100).toFixed(2) + '%（' + attemptsUsed + '/3 次尝试），可预览并保存 Word');
     } catch (e) {
       stopTimer();
       setStatus('❌ ' + classifyError(e).label + ': ' + e.message, 'error');
@@ -425,7 +425,7 @@
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '生成文章';
     let suffix = '';
-    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
+    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(2) + '%';
     return n + suffix + '.docx';
   }
   /* 批量导出：使用链接最后一段 URI 作为文件名（去掉常见网页扩展名，非法字符替换为 _，并附加重复率） */
@@ -444,7 +444,7 @@
     if (!n) n = '链接文章';
     if (n.length > 60) n = n.slice(0, 60);
     let suffix = '';
-    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(1) + '%';
+    if (simPct != null) suffix = '_重复率' + (simPct * 100).toFixed(2) + '%';
     return n + suffix + '.docx';
   }
 
@@ -455,7 +455,7 @@
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '无标题文章';
     if (n.length > 60) n = n.slice(0, 60);
-    if (simPct != null) n += '_重复率' + (simPct * 100).toFixed(1) + '%';
+    if (simPct != null) n += '_重复率' + (simPct * 100).toFixed(2) + '%';
     return n + '.docx';
   }
 
@@ -761,14 +761,14 @@
           // 与单篇模式一致：两侧都用「纯文本内容」（忽略换行/空白/图片占位符、剔除事实核查表），
           // 保证文件名重复率 = 用户把「无图片标记原文 + Word 正文纯文本」粘到 wenpipi.com/sim 的结果
           sim = textSimilarity(pureText(articleText), pureText(out));
-          const pct = (sim * 100).toFixed(1);
+          const pct = (sim * 100).toFixed(2);
           logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
             + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : '')
             + '（本轮 AI 耗时 ' + formatDuration(Date.now() - rStart) + '）');
           if (sim <= 0.05) break;
         }
 
-        setStage('📊 判重计算中…', 78, '重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(1) + '%');
+        setStage('📊 判重计算中…', 78, '重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%');
         // ③ 构建并导出 Word（文件名默认 = 正文前 10 字 + 重复率；勾选链接作为文件名时使用链接 + 重复率；重名自动加序号）
         const blocks = blocksWithImages(articleText, out, pngImages);
         const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
