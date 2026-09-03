@@ -45,6 +45,8 @@
       .replace(/\s+/g, ' ')
       .trim();
   }
+  /* 暴露给 app.js：抓取原文 →「文皮皮·发布形态」预处理（输入框/复制/判重同一口径） */
+  window.cleanPublishText = pureText;
 
   /* 图片插入（混合算法，修复部分文章图片位置错乱）：
    * 1) 优先：改写文本中 AI 保留的 [图片]/【图片】 标记处，按顺序插入图片（最准确）；
@@ -310,6 +312,11 @@
     if (window.__smartBusy) return;
     const original = getSourceText();
     if (!original) return;
+    // 链接模式：原始抓取文本（含 [图片] 标记）仅用于 AI 提示词与图片锚点定位；
+    // 判重/输入框/复制一律使用「发布形态」原文（fillArticle 已清洗，pureText 幂等）。
+    const rawSource = (activeTab === 'link' && window.__articleRawText)
+      ? String(window.__articleRawText)
+      : original;
 
     // 重置相关区域（保存按钮常驻显示，不隐藏）
     document.getElementById('simDisplay').classList.add('hidden');
@@ -346,8 +353,8 @@
         attemptsUsed = attempt;
         logAuto('—— 第 ' + attempt + '/3 次改写 ——');
         setStatus('第 ' + attempt + '/3 次改写中…', 'loading');
-        const messages = buildSmartMessages(original, attempt > 1 ? finalSim : null);
-        lastOriginal = original;
+        const messages = buildSmartMessages(rawSource, attempt > 1 ? finalSim : null);
+        lastOriginal = rawSource;
         // 空内容自动重试：同一轮最多重试 3 次（上游偶发 200 空回复/思考超限）
         let got = false;
         for (let tries = 1; tries <= 2 && !got; tries++) {
@@ -391,7 +398,7 @@
       // 记录本次重复率（供保存按钮命名），生成预览 + 准备 Word（不自动下载，等用户点保存）
       lastSim = finalSim;
       setStatus('正在生成导出预览…', 'loading');
-      const blocks = blocksWithImages(original, finalText, pngImages);
+      const blocks = blocksWithImages(rawSource, finalText, pngImages);
       renderPreview(blocks);
       const docxBuf = buildDocx('生成文章', blocks);
       const name = docxNameFromText(finalText, '生成文章', finalSim);

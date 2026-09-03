@@ -1357,7 +1357,14 @@ els.length.addEventListener('change', () => {
 /* ================= 文章抓取结果填充 + Android 原生回调 ================= */
 function fillArticle(data) {
   els.linkArticle.classList.remove('hidden');
-  els.linkResult.value = data.text || '';
+  // 原文按「文皮皮·发布形态」预处理后填入输入框：无 [图片]/表情占位符、空白折叠，
+  // 用户在文皮皮上可直接复制该文本（与判重口径一致）；
+  // 原始带标记文本存入 __articleRawText，仅用于图片锚点定位与 AI 提示词。
+  const cleaned = (typeof window.cleanPublishText === 'function')
+    ? window.cleanPublishText(data.text || '')
+    : String(data.text || '');
+  els.linkResult.value = cleaned;
+  window.__articleRawText = String(data.text || '');
   els.linkTitle.textContent = data.title || '';
   els.linkSourceTag.classList.toggle('hidden', data.source !== 'toutiao');
   const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
