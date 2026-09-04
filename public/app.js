@@ -1495,6 +1495,20 @@ function textSimilarity(a, b, levelArg) {
   const t1 = String(a == null ? '' : a).trim();
   const t2 = String(b == null ? '' : b).trim();
   const level = levelArg != null ? +levelArg : hetuLevelGet();
+  // ★ 与文皮皮引擎完全同源：优先调用打包进来的 qm.copy.core.js（QmWppCopeEngine.CompareText），
+  //   与 wenpipi.com/sim 页面 worker 是同一份代码、同一消息协议，保证算法逐字节一致。
+  if (typeof QmWppCopeEngine === 'object' && QmWppCopeEngine && typeof QmWppCopeEngine.CompareText === 'function') {
+    const out = { workerId: 0, moduleId: 'compare', msgBody: { subModuleId: 'result', dsHtml: '', similarity: 0 } };
+    QmWppCopeEngine.CompareText({ workerId: 0, moduleId: 'compare', isSpeed: level, inputText1: t1, inputText2: t2 }, out);
+    const v = parseFloat(out.msgBody.similarity);
+    if (isFinite(v)) {
+      textSimilarity.last = v;
+      textSimilarity.note = String(out.msgBody.dsHtml || '').indexOf('段落非常相似') >= 0
+        ? '对比文与原文有一个段落非常相似：(相似度' + v + '%)'
+        : null;
+      return v / 100;
+    }
+  }
   let sim = null;
   textSimilarity.note = null;
   if (t1.indexOf(t2) !== -1 || t2.indexOf(t1) !== -1) {

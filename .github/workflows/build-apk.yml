@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify wenpipi mirror (判重 = 文皮皮引擎原文件)
+        run: node test/wenpipi-mirror.test.js
+
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
