@@ -190,6 +190,7 @@
           <label title="勾选后，批量导出的 Word 文件名使用对应链接（最后一段 URI），并把重复率加在后面"><input type="checkbox" id="useLinkNameChk"> 链接作为文件名</label>
           <label title="勾选后，批量导出的 Word 文件名使用抓取到的文章标题（与「链接作为文件名」「标题+重复率」互斥，后勾选的生效）"><input type="checkbox" id="useTitleNameChk"> 文章标题作为文件名</label>
           <label title="勾选后，导出的 Word 文件名使用「标题+重复率」格式（如：标题_重复率12.3%.docx；与其他文件名选项互斥，后勾选的生效）"><input type="checkbox" id="useTitleSimChk"> 标题+重复率作为文件名</label>
+          <label title="勾选后，批量导出时每篇除改写 Word 外，同时把获取到的原文内容单独导出为 Word，文件名直接以链接地址为名称（如 1875269659229184_原文.docx）；取消则不导出原文"><input type="checkbox" id="exportOriginalChk" checked> 导出原文 Word（链接为名）</label>
           <label title="勾选 = 按原文图片所在位置插入（AI 保留 [图片] 标记时按标记，否则按原文锚点匹配）；取消 = 全部图片统一放到文章末尾"><input type="checkbox" id="imgPosChk" checked> 图片按原文位置插入</label>
         </div>
       </div>

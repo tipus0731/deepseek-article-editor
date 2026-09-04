@@ -839,12 +839,15 @@
 
         setStage('📦 生成 Word 中…', 92, docxName);
         await downloadDocx(docxBuf, docxName);
-        // 原文内容也单独导出为 Word，文件名直接以链接地址为名称（链接 slug + _原文）
-        const origBlocks = originalBlocks(articleText);
-        const origName = docxNameFromUrlOriginal(url);
-        const origBuf = buildDocx(data.title || '原文文章', origBlocks);
-        await downloadDocx(origBuf, origName);
-        logAuto('📄 [第 ' + idx + ' 篇] 另存原文 Word：' + origName + '（' + origBlocks.filter((b) => b.type !== 'img').length + ' 段）');
+        // 「导出原文 Word（链接为名）」勾选时：原文内容也单独导出为 Word，文件名直接以链接地址为名称（链接 slug + _原文）
+        const exportOriginal = (typeof exportOriginalEnabled === 'function') ? exportOriginalEnabled() : true;
+        if (exportOriginal) {
+          const origBlocks = originalBlocks(articleText);
+          const origName = docxNameFromUrlOriginal(url);
+          const origBuf = buildDocx(data.title || '原文文章', origBlocks);
+          await downloadDocx(origBuf, origName);
+          logAuto('📄 [第 ' + idx + ' 篇] 另存原文 Word：' + origName + '（' + origBlocks.filter((b) => b.type !== 'img').length + ' 段）');
+        }
         logAuto('💾 [第 ' + idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
         okCount++;
         if (bar) {

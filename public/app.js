@@ -8,7 +8,7 @@ const els = {
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
   linkUrl: $('linkUrl'), fetchBtn: $('fetchBtn'), linkResult: $('linkResult'),
-  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'), useTitleNameChk: $('useTitleNameChk'), useTitleSimChk: $('useTitleSimChk'), imgPosChk: $('imgPosChk'),
+  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'), useTitleNameChk: $('useTitleNameChk'), useTitleSimChk: $('useTitleSimChk'), exportOriginalChk: $('exportOriginalChk'), imgPosChk: $('imgPosChk'),
   wordChips: $('wordChips'), wordInput: $('wordInput'), addWord: $('addWord'),
   loadPreset: $('loadPreset'), clearWords: $('clearWords'),
   style: $('style'), length: $('length'), targetLenField: $('targetLenField'),
@@ -1873,6 +1873,10 @@ function useTitleNameEnabled() {
 function useTitleSimNameEnabled() {
   return !!(els.useTitleSimChk && els.useTitleSimChk.checked);
 }
+/* 批量导出：是否同时把原文内容单独导出为 Word（文件名直接以链接地址为名称），默认开启 */
+function exportOriginalEnabled() {
+  return !!(els.exportOriginalChk && els.exportOriginalChk.checked);
+}
 /* 插图位置：勾选=按原文位置插入(paragraph) / 取消=全部追加到文章末尾(end) */
 function imagePlacementMode() {
   return (els.imgPosChk && els.imgPosChk.checked) ? 'paragraph' : 'end';
@@ -1935,6 +1939,11 @@ if (els.imgPosChk) {
     storeSet('dsw_img_pos', els.imgPosChk.checked ? '1' : '0');
   });
 }
+if (els.exportOriginalChk) {
+  els.exportOriginalChk.addEventListener('change', () => {
+    storeSet('dsw_export_original', els.exportOriginalChk.checked ? '1' : '0');
+  });
+}
 {
   const v = storeGet('dsw_autocrop');
   els.autoCropChk.checked = v === null ? true : v === '1';
@@ -1944,6 +1953,8 @@ if (els.imgPosChk) {
   if (els.useTitleNameChk) els.useTitleNameChk.checked = vt === null ? false : vt === '1';
   const vs = storeGet('dsw_use_title_sim');
   if (els.useTitleSimChk) els.useTitleSimChk.checked = vs === '1';
+  const vo = storeGet('dsw_export_original');
+  if (els.exportOriginalChk) els.exportOriginalChk.checked = vo === null ? true : vo === '1';
   const vp = storeGet('dsw_img_pos');
   if (els.imgPosChk) els.imgPosChk.checked = vp === null ? true : vp === '1';
 }
