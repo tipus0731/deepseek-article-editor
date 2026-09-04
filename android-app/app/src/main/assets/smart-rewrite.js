@@ -457,6 +457,41 @@
     return n + suffix + '.docx';
   }
 
+  /* 原文 Word 文件名：直接以链接地址为名称（链接最后一段 URI 清洗后的 slug），
+   * 追加「_原文」后缀与改写文档（链接名+重复率）区分；
+   * 无有效链接（如纯粘贴模式）时回退正文前 10 字。 */
+  function docxNameFromUrlOriginal(url) {
+    const slug = docxNameFromUrl(url, null).replace(/\.docx$/i, '');
+    return slug + '_原文.docx';
+  }
+  /* 原文 Word 内容：与「用户从网页手动复制/工具输入框展示」同源的正文（保留段落结构，去掉图片标记） */
+  function originalBlocks(text) {
+    const t = String(text || '').replace(/[\[【]图片[\]】]/g, '').trim();
+    return splitTextBlocks(t);
+  }
+  /* 单篇「导出原文 Word」：抓取/粘贴的原文内容单独导出，文件名 = 链接地址（+_原文），不嵌入图片 */
+  function initSaveOriginalButton() {
+    const btn = document.getElementById('saveOriginalBtn');
+    if (!btn) return;
+    btn.onclick = async () => {
+      if (isExpired()) { logAuto('❌ 软件已到期，功能已停止使用'); return; }
+      const rawOriginal = (window.__articleRawText != null && String(window.__articleRawText).trim())
+        ? String(window.__articleRawText)
+        : getSourceText();
+      if (!String(rawOriginal || '').trim()) { logAuto('❌ 当前没有原文内容，请先粘贴文本或导入链接'); return; }
+      const titleEl = document.getElementById('linkTitle');
+      const articleTitle = (titleEl && String(titleEl.textContent || '').trim()) || '';
+      const blocks = originalBlocks(rawOriginal);
+      const buffer = buildDocx(articleTitle || '原文文章', blocks);
+      const urlRaw = String(document.getElementById('linkUrl').value || '').trim();
+      const name = urlRaw
+        ? docxNameFromUrlOriginal(urlRaw)
+        : ('原文_' + docxNameFromText(rawOriginal, '原文文章', null));
+      await downloadDocx(buffer, name);
+      logAuto('📄 已导出原文 Word：' + name + '（' + blocks.filter((b) => b.type !== 'img').length + ' 段）');
+    };
+  }
+
   /* 使用文章标题作为文件名（清理非法字符，超长截断）；
      simPct 传入时追加重复率后缀，用于「标题+重复率」命名格式 */
   function docxNameFromTitle(title, simPct) {
@@ -804,6 +839,12 @@
 
         setStage('📦 生成 Word 中…', 92, docxName);
         await downloadDocx(docxBuf, docxName);
+        // 原文内容也单独导出为 Word，文件名直接以链接地址为名称（链接 slug + _原文）
+        const origBlocks = originalBlocks(articleText);
+        const origName = docxNameFromUrlOriginal(url);
+        const origBuf = buildDocx(data.title || '原文文章', origBlocks);
+        await downloadDocx(origBuf, origName);
+        logAuto('📄 [第 ' + idx + ' 篇] 另存原文 Word：' + origName + '（' + origBlocks.filter((b) => b.type !== 'img').length + ' 段）');
         logAuto('💾 [第 ' + idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
         okCount++;
         if (bar) {
@@ -854,6 +895,7 @@
     window.runSmartRewrite = runSmartRewrite;
   window.runBatchLinks = runBatchLinks;
   initSaveButton();
+  initSaveOriginalButton();
   updateSaveHint();
   if (document.getElementById('smartBtn')) {
     document.getElementById('smartBtn').addEventListener('click', runSmartRewrite);
