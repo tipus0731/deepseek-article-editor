@@ -1868,7 +1868,7 @@ els.wmRatio.addEventListener('input', () => {
 function autoCropEnabled() {
   return !els.autoCropChk || els.autoCropChk.checked;
 }
-/* 导出读取原文 Word 开关（跳过 AI 改写，直接导出读取的原文和图片） */
+/* 导出读取原文 Word 开关（额外导出原文 Word，并以此原文与改写内容进行文皮皮查重） */
 function exportOriginalEnabled() {
   return !!(els.exportOriginalChk && els.exportOriginalChk.checked);
 }
@@ -1945,7 +1945,7 @@ if (els.useTitleSimChk) {
 if (els.exportOriginalChk) {
   els.exportOriginalChk.addEventListener('change', () => {
     storeSet('dsw_export_original', els.exportOriginalChk.checked ? '1' : '0');
-    flash(els.exportOriginalChk.checked ? '已开启：直接导出读取原文 Word（跳过 AI 改写）' : '已关闭：将进行 AI 改写');
+    flash(els.exportOriginalChk.checked ? '已开启：额外导出原文 Word，并以此原文与改写内容进行文皮皮查重' : '已关闭：仅导出改写 Word');
   });
 }
 if (els.imgPosChk) {

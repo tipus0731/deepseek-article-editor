@@ -25,6 +25,9 @@
     const blocks = [];
     const raw = String(text || '')
       .replace(/(\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】)/gi, ' ')
+      .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
+        return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
+      })
       .split(/\r?\n+/)
       .map((s) => s.replace(/[ \t\u3000]+/g, ' ').trim())
       .filter(Boolean);
@@ -304,8 +307,8 @@
         const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
         const url = (activeTab === 'link' && els.linkUrl) ? String(els.linkUrl.value || '').trim() : '';
 
-        if (isExportOrig || (!outputText && originalText.trim())) {
-          // 导出读取后的原文 Word（包含去水印配图与排版）
+        if (!outputText && originalText.trim()) {
+          // 当前尚未进行 AI 改写，直接导出读取后的原文 Word（包含去水印配图与排版）
           const cleanOrig = cleanArticleText(originalText);
           if (!cleanOrig.trim()) throw new Error('当前没有读取到原文内容，请先输入或抓取文章');
           const pngImages = await preparePngImages(articleImages || [], { log: logAuto });
@@ -316,18 +319,17 @@
           const buffer = buildDocx(articleTitle || '原文内容', blocks);
 
           let name = '';
-          if (useTitleSimName && articleTitle) name = docxNameFromTitle(articleTitle, 1);
-          else if (useTitleName && articleTitle) name = docxNameFromTitle(articleTitle);
-          else if (useLinkName && url) name = docxNameFromUrl(url);
+          if (useTitleName && articleTitle) name = sanitizeFileName(articleTitle) + '_原文.docx';
+          else if (useLinkName && url) name = docxNameFromUrl(url) + '_原文.docx';
           else if (articleTitle) name = sanitizeFileName(articleTitle) + '_原文.docx';
-          else name = docxNameFromText(cleanOrig, '原文内容');
+          else name = docxNameFromText(cleanOrig, '原文内容') + '_原文.docx';
 
           await downloadDocx(buffer, name);
           logAuto('💾 已保存读取原文 Word：' + name + '（共 ' + blocks.length + ' 个内容块，图片 ' + pngImages.length + ' 张）');
         } else {
           // 导出 AI 改写结果 Word
           let text = outputText || '';
-          if (!text.trim()) throw new Error('当前没有可导出的内容，请先点击「开始修改」或「智能改写」生成文章');
+          if (!text.trim()) throw new Error('当前没有可导出的内容，请先输入原文或点击「智能改写」生成文章');
           const cut = cutFactCheck(text);
           if (cut.length < text.length) logAuto('✂ 已剔除「事实核查表」及其后的内容');
           text = cut;
@@ -345,7 +347,17 @@
           else name = docxNameFromText(getBlocksPlainText(blocks), articleTitle || '生成文章', lastSim);
 
           await downloadDocx(buffer, name);
-          logAuto('💾 已保存：' + name);
+          logAuto('💾 已保存改写 Word：' + name);
+
+          // 若勾选了「同时导出原文 Word」，也额外保存一份原文 Word
+          if (isExportOrig && originalText.trim()) {
+            const cleanOrig = cleanArticleText(originalText);
+            const origBlocks = blocksWithImages(rawSource, cleanOrig, pngImages);
+            const origBuf = buildDocx(articleTitle || '原文内容', origBlocks);
+            let origName = (articleTitle ? sanitizeFileName(articleTitle) : '原文内容') + '_原文.docx';
+            await downloadDocx(origBuf, origName);
+            logAuto('💾 已同时额外保存原文 Word：' + origName);
+          }
         }
       } catch (e) {
         logAuto('❌ 导出失败：' + e.message);
@@ -391,27 +403,16 @@
     const titleEl = document.getElementById('linkTitle');
     const articleTitle = (titleEl && String(titleEl.textContent || '').trim()) || '';
 
-    // 若勾选「导出读取原文 Word」，直接导出原文 Word（跳过 AI 改写）
+    // 构建原文 Word 内容块，并提取用于查重的标准纯文本（与导出原文 Word 的内容 100% 一致）
+    const origBlocks = blocksWithImages(rawSource, cleanOrig, pngImages);
+    const origPlainText = getBlocksPlainText(origBlocks) || cleanOrig;
+
+    // 若勾选「同时导出原文 Word」，先额外导出原文 Word（不跳过 AI 改写）
     if (isExportOrig) {
-      const blocks = blocksWithImages(rawSource, cleanOrig, pngImages);
-      renderPreview(blocks);
-      const docxBuf = buildDocx(articleTitle || '原文内容', blocks);
-      const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
-      const useTitleName = (typeof useTitleNameEnabled === 'function') ? useTitleNameEnabled() : false;
-      const name = (useTitleSimName && articleTitle)
-        ? docxNameFromTitle(articleTitle, 1)
-        : (useTitleName && articleTitle)
-          ? docxNameFromTitle(articleTitle)
-          : (articleTitle ? sanitizeFileName(articleTitle) + '_原文.docx' : docxNameFromText(cleanOrig, '原文内容'));
-      lastDocx = { buffer: docxBuf, name: name };
-      lastSim = 1;
-      updateSimDisplay(1, 100);
-      updateSaveHint();
-      logAuto('📄 原文预览已生成（已勾选「导出读取原文 Word」，跳过 AI 改写）：' + blocks.length + ' 个内容块（含图片 ' + pngImages.length + ' 张）。');
-      await downloadDocx(docxBuf, name);
-      logAuto('💾 已直接保存读取原文 Word：' + name);
-      setStatus('✅ 读取原文 Word 已导出（跳过 AI 改写）', 'done');
-      return;
+      const origDocxBuf = buildDocx(articleTitle || '原文内容', origBlocks);
+      const origName = (articleTitle ? sanitizeFileName(articleTitle) : '原文内容') + '_原文.docx';
+      await downloadDocx(origDocxBuf, origName);
+      logAuto('💾 已额外导出读取原文 Word：' + origName + '（含图片 ' + pngImages.length + ' 张）');
     }
 
     const apiKey = document.getElementById('apiKey').value.trim();
@@ -420,7 +421,7 @@
 
     window.__smartBusy = true;
     document.getElementById('smartBtn').disabled = true;
-    logAuto('开始智能改写（最多 3 次尝试，文皮皮·河图引擎标准判重目标 ≤5%）');
+    logAuto('开始智能改写（最多 3 次尝试，文皮皮标准判重目标 ≤5%）');
 
     let finalText = '';
     let finalSim = 1;
@@ -453,11 +454,12 @@
         // 构建 Word 内容块并提取纯文本：严格与导出的 Word 正文及文皮皮线上检测完全一致
         const tempBlocks = blocksWithImages(rawSource, finalText, pngImages);
         const wordText = getBlocksPlainText(tempBlocks);
-        const sim = textSimilarity(cleanOrig, wordText);
+        // 使用导出的原文 Word 纯文本与 AI 改写后的 Word 纯文本进行文皮皮查重对比
+        const sim = textSimilarity(origPlainText, wordText);
         finalSim = sim;
         const pct = (sim * 100).toFixed(2);
         updateSimDisplay(attempt, parseFloat(pct));
-        logAuto('本次重复度：' + pct + '% （文皮皮·河图引擎标准检测，目标 ≤5%，>5% 自动降重重写）');
+        logAuto('本次重复度：' + pct + '% （文皮皮标准检测，目标 ≤5%，>5% 自动降重重写）');
 
         if (sim <= 0.05) { logAuto('✅ 重复度 ' + pct + '% ≤ 5%，达标！'); break; }
         if (attempt < 3) {
@@ -489,6 +491,11 @@
       lastDocx = { buffer: docxBuf, name: name };
       updateSaveHint();
       logAuto('📄 预览已生成：' + blocks.length + ' 个内容块（含图片 ' + pngImages.length + ' 张）。点击「💾 导出 Word 文档」保存。');
+      // 若勾选了「同时导出原文 Word」，改写 Word 也自动下载保存，让用户直接拥有双份 Word
+      if (isExportOrig) {
+        await downloadDocx(docxBuf, name);
+        logAuto('💾 已同时保存改写 Word：' + name);
+      }
       setStatus('✅ 完成：重复度 ' + (finalSim * 100).toFixed(2) + '%（' + attemptsUsed + '/3 次尝试），可预览并保存 Word');
     } catch (e) {
       stopTimer();
@@ -833,74 +840,85 @@
         const pngImages = await preparePngImages(imgs.map((u) => ({ url: u, blobUrl: '' })), { log: logAuto, autoCrop: true });
 
         const isExportOrig = (typeof exportOriginalEnabled === 'function') && exportOriginalEnabled();
+
+        // ① 构建原文 Word 内容块及纯文本（严格对齐导出的原文 Word 内容）
+        const origBlocks = blocksWithImages(articleText, cleanOriginal, pngImages);
+        const origPlainText = getBlocksPlainText(origBlocks) || cleanOriginal;
+
+        // 若勾选「同时导出原文 Word」，先额外导出原文 Word（不跳过 AI 改写）
+        if (isExportOrig) {
+          setStage('📦 额外导出原文 Word…', 35, '正在保存原文 Word…');
+          const origDocxBuf = buildDocx(data.title || '原文内容', origBlocks);
+          let origDocxName = '';
+          if (useTitleName || useTitleSimName) {
+            origDocxName = (data.title ? sanitizeFileName(data.title) : ('文章' + idx)) + '_原文.docx';
+          } else if (useLinkName) {
+            origDocxName = docxNameFromUrl(url) + '_原文.docx';
+          } else {
+            origDocxName = docxNameFromText(origPlainText, data.title || ('文章' + idx)) + '_原文.docx';
+          }
+          if (usedNames.has(origDocxName)) {
+            const dot = origDocxName.lastIndexOf('.');
+            const ext = dot >= 0 ? origDocxName.slice(dot) : '';
+            const base = dot >= 0 ? origDocxName.slice(0, dot) : origDocxName;
+            let seq = 1;
+            do { seq++; origDocxName = base + '_' + seq + ext; } while (usedNames.has(origDocxName));
+          }
+          usedNames.add(origDocxName);
+          await downloadDocx(origDocxBuf, origDocxName);
+          logAuto('💾 [第 ' + idx + ' 篇] 已额外导出原文 Word：' + origDocxName + '（含图片 ' + pngImages.length + ' 张）');
+        }
+
+        // ② AI 改写 + 自动判重降重（≤5% 达标；>5% 最多 3 轮；3 轮后仍超标也导出）
+        const rec = { idx, messages: buildSmartMessages(articleText, null) };
         let out = '';
         let sim = null;
         let blocks = null;
-
-        if (isExportOrig) {
-          // 直接导出读取原文 Word（跳过 AI 改写）
-          setStage('📦 构建原文 Word 中…', 85, '直接导出原文 Word（跳过 AI 改写）');
-          blocks = blocksWithImages(articleText, cleanOriginal, pngImages);
-          out = cleanOriginal;
-          sim = 1;
-        } else {
-          // ② AI 改写 + 自动判重降重（≤5% 达标；>5% 最多 3 轮；3 轮后仍超标也导出）
-          const rec = { idx, messages: buildSmartMessages(articleText, null) };
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            rec.messages = buildSmartMessages(articleText, attempt > 1 ? sim : null);
-            setStage('🧠 AI 改写中（第 ' + attempt + '/3 轮）…', 55, '等待 AI 流式输出…');
-            const rStart = Date.now();
-            out = '';
-            for (let tries = 1; tries <= 2 && !out; tries++) {
-              out = await aiCall(rec, slot);
-              if (!out && tries < 2) {
-                logAuto('⚠ [第 ' + idx + ' 篇] AI 返回空内容，重试 ' + tries + '/2…');
-                await sleep(1500);
-              }
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          rec.messages = buildSmartMessages(articleText, attempt > 1 ? sim : null);
+          setStage('🧠 AI 改写中（第 ' + attempt + '/3 轮）…', 55, '等待 AI 流式输出…');
+          const rStart = Date.now();
+          out = '';
+          for (let tries = 1; tries <= 2 && !out; tries++) {
+            out = await aiCall(rec, slot);
+            if (!out && tries < 2) {
+              logAuto('⚠ [第 ' + idx + ' 篇] AI 返回空内容，重试 ' + tries + '/2…');
+              await sleep(1500);
             }
-            if (!out) throw new Error('AI 未返回内容（已重试：可能是思考超限或上游空回复，可稍后重试或降低并发）');
-            const cut = cutFactCheck(out);
-            if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
-            out = cut;
-
-            // 构建当前轮次 blocks 并提取纯文本
-            blocks = blocksWithImages(articleText, out, pngImages);
-            const wordPlainText = getBlocksPlainText(blocks);
-
-            // 与文皮皮（wenpipi.com/sim）算法完全一致：干净原文 vs 导出的 Word 纯文本
-            sim = textSimilarity(cleanOriginal, wordPlainText);
-            const pct = (sim * 100).toFixed(2);
-            logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
-              + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : '')
-              + '（本轮 AI 耗时 ' + formatDuration(Date.now() - rStart) + '）');
-            if (sim <= 0.05) break;
           }
-          if (!blocks) blocks = blocksWithImages(articleText, out, pngImages);
+          if (!out) throw new Error('AI 未返回内容（已重试：可能是思考超限或上游空回复，可稍后重试或降低并发）');
+          const cut = cutFactCheck(out);
+          if (cut.length < out.length) logAuto('✂ [第 ' + idx + ' 篇] 已剔除「事实核查表」及其后的内容');
+          out = cut;
+
+          // 构建当前轮次 blocks 并提取纯文本
+          blocks = blocksWithImages(articleText, out, pngImages);
+          const wordPlainText = getBlocksPlainText(blocks);
+
+          // 与文皮皮（wenpipi.com/sim）算法完全一致：导出的原文 Word 纯文本 vs 导出的改写 Word 纯文本
+          sim = textSimilarity(origPlainText, wordPlainText);
+          const pct = (sim * 100).toFixed(2);
+          logAuto('[第 ' + idx + ' 篇] 第 ' + attempt + '/3 次改写，重复率 ' + pct + '% → ' + (sim <= 0.05 ? '✅ 达标（≤5%）' : '⚠ 超标（>5%）')
+            + (sim > 0.05 && attempt < 3 ? '，继续降重…' : sim > 0.05 ? '，已尝试 3 次，按当前版本导出' : '')
+            + '（本轮 AI 耗时 ' + formatDuration(Date.now() - rStart) + '）');
+          if (sim <= 0.05) break;
         }
+        if (!blocks) blocks = blocksWithImages(articleText, out, pngImages);
 
         const wordPlainText = getBlocksPlainText(blocks);
-        setStage('📊 导出准备中…', 78, isExportOrig ? '原文 Word 准备就绪' : ('重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%'));
-        // ③ 构建并导出 Word
+        setStage('📊 导出准备中…', 78, '重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%');
+        // ③ 构建并导出改写后的 Word
         const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
         const useTitleName = (typeof useTitleNameEnabled === 'function') ? useTitleNameEnabled() : false;
         const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
 
-        let docxName = '';
-        if (isExportOrig) {
-          if (useTitleSimName && data.title) docxName = docxNameFromTitle(data.title, 1);
-          else if (useTitleName && data.title) docxName = docxNameFromTitle(data.title);
-          else if (useLinkName) docxName = docxNameFromUrl(url);
-          else if (data.title) docxName = sanitizeFileName(data.title) + '_原文.docx';
-          else docxName = docxNameFromText(wordPlainText, data.title || ('文章' + idx));
-        } else {
-          docxName = useTitleSimName
-            ? docxNameFromTitle(data.title, sim != null ? sim : 1)
-            : useTitleName
-              ? docxNameFromTitle(data.title)
-              : useLinkName
-                ? docxNameFromUrl(url, sim != null ? sim : 1)
-                : docxNameFromText(wordPlainText, data.title || ('文章' + idx), sim != null ? sim : 1);
-        }
+        let docxName = useTitleSimName
+          ? docxNameFromTitle(data.title, sim != null ? sim : 1)
+          : useTitleName
+            ? docxNameFromTitle(data.title)
+            : useLinkName
+              ? docxNameFromUrl(url, sim != null ? sim : 1)
+              : docxNameFromText(wordPlainText, data.title || ('文章' + idx), sim != null ? sim : 1);
         if (usedNames.has(docxName)) {
           const dot = docxName.lastIndexOf('.');
           const ext = dot >= 0 ? docxName.slice(dot) : '';
@@ -909,12 +927,12 @@
           do { seq++; docxName = base + '_' + seq + ext; } while (usedNames.has(docxName));
         }
         usedNames.add(docxName);
-        const docxBuf = buildDocx(data.title || (isExportOrig ? '原文内容' : '生成文章'), blocks);
-        logAuto('📄 [第 ' + idx + ' 篇] 保存 Word：' + docxName + (isExportOrig ? '（原文导出' : ('（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%')) + '，' + pngImages.length + ' 张图片）…');
+        const docxBuf = buildDocx(data.title || '生成文章', blocks);
+        logAuto('📄 [第 ' + idx + ' 篇] 保存改写 Word：' + docxName + '（重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%，' + pngImages.length + ' 张图片）…');
 
-        setStage('📦 生成 Word 中…', 92, docxName);
+        setStage('📦 生成改写 Word 中…', 92, docxName);
         await downloadDocx(docxBuf, docxName);
-        logAuto('💾 [第 ' + idx + ' 篇] 已保存：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
+        logAuto('💾 [第 ' + idx + ' 篇] 已保存改写 Word：' + docxName + '（⏱ 本条耗时 ' + formatDuration(Date.now() - tOne) + '）');
         okCount++;
         if (bar) {
           bar.stage.textContent = '✅ 完成';
