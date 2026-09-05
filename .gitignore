@@ -15,3 +15,5 @@ Thumbs.db
 # 构建产物
 release/
 apk-output/
+
+scratch/

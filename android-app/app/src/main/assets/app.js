@@ -220,47 +220,98 @@ function detectCharset(contentType, buf) {
   return 'utf-8';
 }
 function extractArticleText(html) {
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = titleMatch ? decodeEntities(titleMatch[1].trim()).slice(0, 120) : '';
-  let h = html
-    .replace(/<head[\s\S]*?<\/head>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(script|style|noscript|iframe|svg|nav|header|footer|aside|form|button|select|input|textarea|video|audio|canvas|template|object|embed)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+  let title = '';
+  const wxTitle = html.match(/<h1[^>]*class="[^"]*rich_media_title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i)
+    || html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/i);
+  if (wxTitle) title = decodeEntities(wxTitle[1].trim());
+  if (!title) {
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    title = titleMatch ? decodeEntities(titleMatch[1].trim()).slice(0, 120) : '';
+  }
+
+  let seg = html;
+  const wxContent = html.match(/<div[^>]*class="[^"]*rich_media_content[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+  if (wxContent) {
+    seg = wxContent[1];
+  } else {
+    seg = seg
+      .replace(/<head[\s\S]*?<\/head>/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(script|style|noscript|iframe|svg|nav|header|footer|aside|form|button|select|input|textarea|video|audio|canvas|template|object|embed)[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  }
+
+  let segProcessed = seg
+    .replace(/<img[^>]*>/gi, (tag) => (pickImageUrlJs(tag) ? ' \n[图片]\n ' : ''))
     .replace(/<br[^>]*>/gi, '\n')
     .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ');
-  const lines = decodeEntities(h)
+
+  const processedParagraphs = decodeEntities(segProcessed)
     .split('\n')
-    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .map((l) => l.replace(/[ \t\u3000]+/g, ' ').trim())
     .filter((l) => l.length > 0);
-  const text = lines.join('\n').slice(0, 30000);
-  return { title, text };
+
+  let segRaw = seg
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<br[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+
+  const rawParagraphs = decodeEntities(segRaw)
+    .split('\n')
+    .map((l) => l.replace(/[ \t\u3000]+/g, ' ').trim())
+    .filter((l) => l.length > 0);
+
+  const rawText = rawParagraphs.join('\n').slice(0, 30000);
+  const processedText = processedParagraphs.join('\n').slice(0, 30000);
+
+  return { title, rawText, processedText, text: processedText };
 }
+
 function extractToutiaoFromHtml(html) {
   const idx = html.search(/(?:id|class)="[^"]*article-content[^"]*"/i);
-  if (idx < 0) return null;
-  const start = html.indexOf('>', idx) + 1;
-  let seg = html.slice(start, start + 80000);
-  let endMatch = seg.search(/<(div|section|footer)[^>]*(?:class|id)="[^"]*(?:article-tag|article-bottom|article-footer|author-box|user-card|article-vote|article-comment|article-recommend|recommend|feed-card|hot-board|related)[^"]*"/i);
-  if (endMatch > 0) seg = seg.slice(0, endMatch);
-  else {
-    const guard = seg.search(/(?:id|class)="[^"]*(?:recommend|feed-card|hot-board|article-footer|related-news)[^"]*"/i);
-    if (guard > 0) seg = seg.slice(0, guard);
+  let seg = '';
+  if (idx >= 0) {
+    const start = html.indexOf('>', idx) + 1;
+    seg = html.slice(start, start + 80000);
+    let endMatch = seg.search(/<(div|section|footer)[^>]*(?:class|id)="[^"]*(?:article-tag|article-bottom|article-footer|author-box|user-card|article-vote|article-comment|article-recommend|recommend|feed-card|hot-board|related)[^"]*"/i);
+    if (endMatch > 0) seg = seg.slice(0, endMatch);
+    else {
+      const guard = seg.search(/(?:id|class)="[^"]*(?:recommend|feed-card|hot-board|article-footer|related-news)[^"]*"/i);
+      if (guard > 0) seg = seg.slice(0, guard);
+    }
+  } else {
+    seg = html;
   }
 
-  const paragraphs = [];
+  const rawParagraphs = [];
+  const processedParagraphs = [];
   const images = [];
   let m;
   const pRe = /<p[^>]*>([\s\S]*?)<\/p>/gi;
   while ((m = pRe.exec(seg)) !== null) {
-    const inner = m[1]
+    const innerRaw = m[1]
       .replace(/<br[^>]*>/gi, '\n')
-      .replace(/<img[^>]*>/gi, (tag) => (pickImageUrlJs(tag) ? ' [图片] ' : ''))
+      .replace(/<img[^>]*>/gi, '')
       .replace(/<[^>]+>/g, ' ')
       .replace(/&nbsp;/gi, ' ')
-      .replace(/\s+/g, ' ')
+      .replace(/[ \t\u3000]+/g, ' ')
       .trim();
-    if (inner) paragraphs.push(inner);
+    if (innerRaw) rawParagraphs.push(innerRaw);
+
+    const innerProcessed = m[1]
+      .replace(/<br[^>]*>/gi, '\n')
+      .replace(/<img[^>]*>/gi, (tag) => (pickImageUrlJs(tag) ? ' \n[图片]\n ' : ''))
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/[ \t\u3000]+/g, ' ')
+      .trim();
+    if (innerProcessed) {
+      for (const sub of innerProcessed.split('\n')) {
+        const s = sub.trim();
+        if (s) processedParagraphs.push(s);
+      }
+    }
   }
   const imgRe = /<img[^>]*>/gi;
   while ((m = imgRe.exec(seg)) !== null) {
@@ -269,12 +320,17 @@ function extractToutiaoFromHtml(html) {
   }
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = titleMatch ? decodeEntities(titleMatch[1].trim()).slice(0, 120) : '';
+  const rawText = rawParagraphs.join('\n').slice(0, 30000);
+  const processedText = processedParagraphs.join('\n').slice(0, 30000);
   return {
     title,
-    text: paragraphs.join('\n').slice(0, 30000),
+    rawText,
+    processedText,
+    text: processedText,
     images: [...new Set(images)].slice(0, 30),
   };
 }
+
 function attrValueJs(tag, attr) {
   let m = tag.match(new RegExp(attr + '=\"([^\"]*)\"', 'i'));
   if (m && m[1]) return m[1];
@@ -293,53 +349,106 @@ function pickImageUrlJs(tag) {
 }
 /* ================= 今日头条：info 接口 / 移动端 RENDER_DATA 备用解析（桌面页常被 JS 反爬挑战拦截） ================= */
 function toutiaoArticleId(url) {
-  let m = /\/article\/(\d{6,})/i.exec(String(url));
+  let m = /\/(?:article|w|i|group|item|trending)\/(\d{6,})/i.exec(String(url));
   if (m) return m[1];
-  m = /\/w\/(\d{6,})/i.exec(String(url)); // 微头条 /w/ 格式
-  if (m) return m[1];
-  m = /\/i(\d{6,})/i.exec(String(url));
-  if (m) return m[1];
-  // 兜底：URL 中任意 6 位以上数字串（覆盖 /note/ /item/ 等新格式）
   m = /(\d{6,})/.exec(String(url));
   return m ? m[1] : null;
 }
+
+/**
+ * 将头条正文 HTML 转换为两篇文章：
+ * 1. rawText: 原始文章，纯净真实段落，不做任何人工添加[图片]占位或剔除处理，用于直接Word导出与文皮皮查重对比
+ * 2. processedText: 预处理文章，在每个配图位置保留 [图片] 占位标记，供 AI 生成使用
+ */
 function toutiaoHtmlToResult(contentHtml, title) {
-  const paragraphs = [];
   const images = [];
-  let seg = String(contentHtml).replace(/<img[^>]*>/gi, (tag) => (pickImageUrlJs(tag) ? ' [图片] ' : ''));
-  seg = seg
+  const rawParagraphs = [];
+  const processedParagraphs = [];
+
+  const imgRe = /<img[^>]*>/gi;
+  let im;
+  while ((im = imgRe.exec(contentHtml)) !== null) {
+    const u = pickImageUrlJs(im[0]);
+    if (u) images.push(u);
+  }
+
+  let segProcessed = String(contentHtml)
+    .replace(/<img[^>]*>/gi, (tag) => (pickImageUrlJs(tag) ? ' \n[图片]\n ' : ''))
     .replace(/<br[^>]*>/gi, '\n')
     .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  for (const line of seg.split('\n')) {
-    const l = line.trim();
-    if (l) paragraphs.push(l);
+    .replace(/<[^>]+>/g, ' ');
+
+  for (const line of segProcessed.split('\n')) {
+    const l = decodeEntities(line).replace(/[ \t\u3000]+/g, ' ').trim();
+    if (l) processedParagraphs.push(l);
   }
-  String(contentHtml).replace(/<img[^>]*>/gi, (tag) => {
-    const u = pickImageUrlJs(tag);
-    if (u) images.push(u);
-    return '';
-  });
-  return { title: String(title || '').slice(0, 120), text: paragraphs.join('\n'), images: [...new Set(images)].slice(0, 30) };
+
+  let segRaw = String(contentHtml)
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<br[^>]*>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+
+  for (const line of segRaw.split('\n')) {
+    const l = decodeEntities(line).replace(/[ \t\u3000]+/g, ' ').trim();
+    if (l) rawParagraphs.push(l);
+  }
+
+  const rawText = rawParagraphs.join('\n').slice(0, 30000);
+  const processedText = processedParagraphs.join('\n').slice(0, 30000);
+
+  return {
+    title: decodeEntities(String(title || '')).slice(0, 120),
+    rawText,
+    processedText,
+    text: processedText,
+    images: [...new Set(images)].slice(0, 30),
+  };
 }
+
 function extractToutiaoRenderDataJs(html) {
   const m = /<script id="RENDER_DATA" type="application\/json">([\s\S]*?)<\/script>/i.exec(String(html));
   if (!m) return null;
   let obj = null;
   try { obj = JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
   const info = (obj && obj.articleInfo) || null;
-  if (!info) return null;
   let content = '';
-  try { content = String(info.content || ''); } catch { /* ignore */ }
-  if (!content || !content.replace(/<[^>]+>/g, '').trim()) return null;
   let title = '';
-  try { title = String(info.title || ''); } catch { /* ignore */ }
-  const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  if (!title && t) title = decodeEntities(t[1].trim());
-  return { content, title };
+  let extraImages = [];
+
+  if (info) {
+    content = String(info.content || '');
+    title = String(info.title || '');
+  }
+
+  // 微头条（thread）兜底
+  if (!content || !content.replace(/<[^>]+>/g, '').trim()) {
+    const thread = (obj && (obj.thread || (obj.data && obj.data.thread))) || null;
+    const tb = (thread && thread.thread_base) || (obj && obj.thread_base) || null;
+    if (tb) {
+      content = String(tb.content || tb.title || '');
+      title = String(tb.title || title || '');
+      const list = tb.large_image_list;
+      if (Array.isArray(list)) {
+        for (const it of list) {
+          const u = it && typeof it === 'object' ? String(it.url || '') : String(it || '');
+          if (u && pickImageUrlJs('<img src="' + u + '">')) extraImages.push(u);
+        }
+      }
+    }
+  }
+
+  if (!title) {
+    const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    if (t) title = decodeEntities(t[1].trim());
+  }
+
+  if (!content || !content.replace(/<[^>]+>/g, '').trim()) return null;
+  const res = toutiaoHtmlToResult(content, title);
+  if (extraImages.length) {
+    res.images = [...new Set([...res.images, ...extraImages])].slice(0, 30);
+  }
+  return res;
 }
 
 async function directFetchArticle(url) {
@@ -366,7 +475,6 @@ async function directFetchArticle(url) {
             let j = null;
             try {
               j = JSON.parse(raw);
-              // allorigins /get 返回 {"contents":"<json字符串>"}，需要解开一层
               if (j && typeof j.contents === 'string' && /^[\s]*[{[]/.test(j.contents)) j = JSON.parse(j.contents);
             } catch { j = null; }
             const d = (j && j.data) || {};
@@ -391,7 +499,18 @@ async function directFetchArticle(url) {
             if (content && content.replace(/<[^>]+>/g, '').trim()) {
               const r2 = toutiaoHtmlToResult(content, title);
               const allImgs = [...new Set([...(r2.images || []), ...extraImages])].slice(0, 30);
-              if (r2.text || allImgs.length) return { title: r2.title, text: r2.text, images: allImgs, url, via: p.name, source: 'toutiao' };
+              if (r2.rawText || allImgs.length) {
+                return {
+                  title: r2.title,
+                  rawText: r2.rawText,
+                  processedText: r2.processedText,
+                  text: r2.processedText,
+                  images: allImgs,
+                  url,
+                  via: p.name,
+                  source: 'toutiao'
+                };
+              }
             }
           } else {
             let html = new TextDecoder('utf-8').decode(buf);
@@ -400,9 +519,17 @@ async function directFetchArticle(url) {
               if (w && typeof w.contents === 'string' && w.contents.includes('<')) html = w.contents;
             } catch { /* 普通 HTML */ }
             const rd = extractToutiaoRenderDataJs(html);
-            if (rd) {
-              const r2 = toutiaoHtmlToResult(rd.content, rd.title);
-              if (r2.text || r2.images.length) return { title: r2.title, text: r2.text, images: r2.images, url, via: p.name, source: 'toutiao' };
+            if (rd && (rd.rawText || rd.images.length)) {
+              return {
+                title: rd.title,
+                rawText: rd.rawText,
+                processedText: rd.processedText,
+                text: rd.processedText,
+                images: rd.images,
+                url,
+                via: p.name,
+                source: 'toutiao'
+              };
             }
           }
         } catch { /* 下一个代理 */ }
@@ -420,12 +547,29 @@ async function directFetchArticle(url) {
       const charset = detectCharset(res.headers.get('content-type') || '', buf);
       const html = new TextDecoder(charset).decode(buf);
       const tt = extractToutiaoFromHtml(html);
-      if (tt && (tt.text || tt.images.length)) {
-        return { title: tt.title, text: tt.text, images: tt.images, url, via: p.name, source: 'toutiao' };
+      if (tt && (tt.rawText || tt.images.length)) {
+        return {
+          title: tt.title,
+          rawText: tt.rawText,
+          processedText: tt.processedText,
+          text: tt.processedText,
+          images: tt.images,
+          url,
+          via: p.name,
+          source: 'toutiao'
+        };
       }
       const extracted = extractArticleText(html);
-      if (extracted.text) {
-        return { title: extracted.title, text: extracted.text, images: [], url, via: p.name };
+      if (extracted.rawText) {
+        return {
+          title: extracted.title,
+          rawText: extracted.rawText,
+          processedText: extracted.processedText,
+          text: extracted.processedText,
+          images: [],
+          url,
+          via: p.name
+        };
       }
       lastErr = new Error(p.name + ' 未能提取到正文');
     } catch (e) {
@@ -499,10 +643,12 @@ function getSourceText(silent) {
 }
 function updateCounts() {
   const src = activeTab === 'link' ? els.linkResult.value : els.inputText.value;
-  const n = src.replace(/\s/g, '').length;
+  const cleanSrc = (typeof cleanArticleText === 'function') ? cleanArticleText(src) : src.replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+  const n = cleanSrc.replace(/\s/g, '').length;
   els.inputCount.textContent = n + ' 字';
   els.inputWarn.classList.toggle('hidden', n <= 30000);
-  const m = outputText.replace(/\s/g, '').length;
+  const cleanOut = (typeof cleanArticleText === 'function') ? cleanArticleText(outputText) : outputText.replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+  const m = cleanOut.replace(/\s/g, '').length;
   els.outCount.textContent = m + ' 字';
 }
 
@@ -993,22 +1139,29 @@ function switchView(view) {
 /* ================= 复制 / 下载 ================= */
 async function copyOutput() {
   if (!outputText) { flash('暂无内容可复制', true); return; }
+  // 复制给用户用于发布或文皮皮查重的内容，不计算且不包含任何 [图片] 配图标记
+  const cleanText = (typeof cleanArticleText === 'function')
+    ? cleanArticleText(outputText)
+    : String(outputText).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '').split(/\r?\n+/).map((s) => s.trim()).filter(Boolean).join('\n');
   try {
-    await navigator.clipboard.writeText(outputText);
-    flash('已复制到剪贴板');
+    await navigator.clipboard.writeText(cleanText);
+    flash('已复制到剪贴板（已去除配图标记，可直接查重）');
   } catch {
     const ta = document.createElement('textarea');
-    ta.value = outputText;
+    ta.value = cleanText;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
     ta.remove();
-    flash('已复制到剪贴板');
+    flash('已复制到剪贴板（已去除配图标记，可直接查重）');
   }
 }
 function downloadOutput() {
   if (!outputText) { flash('暂无内容可下载', true); return; }
-  const blob = new Blob(['\uFEFF' + outputText], { type: 'text/plain;charset=utf-8' });
+  const cleanText = (typeof cleanArticleText === 'function')
+    ? cleanArticleText(outputText)
+    : String(outputText).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '').split(/\r?\n+/).map((s) => s.trim()).filter(Boolean).join('\n');
+  const blob = new Blob(['\uFEFF' + cleanText], { type: 'text/plain;charset=utf-8' });
   const name = '文章助手修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
   if (IS_ANDROID) {
     saveBlobAndroid(blob, name, 'text')
@@ -1031,7 +1184,12 @@ els.linkResult.addEventListener('input', updateCounts);
 
 els.fetchBtn.addEventListener('click', async () => {
   if (isExpired()) { flash('软件已到期，功能已停止使用', true); return; }
-  const url = els.linkUrl.value.trim();
+  let url = els.linkUrl.value.trim();
+  const urlMatch = url.match(/https?:\/\/[^\s"'<>\u4e00-\u9fa5]+/i);
+  if (urlMatch) {
+    url = urlMatch[0].replace(/[.,;:!?，。？！；：“”‘’()（）\[\]{}<>]+$/, '').trim();
+    els.linkUrl.value = url;
+  }
   if (!/^https?:\/\//i.test(url)) { flash('请输入有效的 http(s) 链接', true); return; }
   els.fetchBtn.disabled = true;
   els.fetchBtn.textContent = '抓取中…';
@@ -1376,15 +1534,19 @@ function cleanArticleText(text) {
 window.cleanArticleText = cleanArticleText;
 window.cleanPublishText = cleanArticleText;
 
-/* ================= 文章抓取结果填充 + Android 原生回调 ================= */
 function fillArticle(data) {
   els.linkArticle.classList.remove('hidden');
-  // 原文按文皮皮标准预处理后填入输入框：保留真实自然段落换行(\n)，去除 [图片] 标记，
-  // 用户在文皮皮 (wenpipi.com/sim) 上可直接复制该文本作为对比原文（与 Word 导出及判重口径 100% 一致）；
-  // 原始带标记文本存入 __articleRawText，仅用于图片锚点定位与 AI 提示词。
-  const cleaned = cleanArticleText(data.text || '');
-  els.linkResult.value = cleaned;
-  window.__articleRawText = String(data.text || '');
+  const rawText = String(data.rawText != null ? data.rawText : (data.text || ''));
+  const processedText = String(data.processedText != null ? data.processedText : (data.text || ''));
+
+  // 原始文章不做任何处理，直接填入展示并供直接 Word 导出及最后对比重复率使用
+  els.linkResult.value = rawText;
+  window.__rawArticleText = rawText;
+
+  // 预处理文章（即插入图片位置使用的文章），用于 AI 生成使用与插图定位
+  window.__processedArticleText = processedText;
+  window.__articleRawText = processedText;
+
   els.linkTitle.textContent = data.title || '';
   els.linkSourceTag.classList.toggle('hidden', data.source !== 'toutiao');
   const imgs = (data.images || []).filter((u) => typeof u === 'string' && u);
@@ -1512,8 +1674,15 @@ function hetuParagraphMatch(t1, t2) {
   return null;
 }
 function textSimilarity(a, b, levelArg) {
-  const t1 = String(a == null ? '' : a).trim();
-  const t2 = String(b == null ? '' : b).trim();
+  // 核心规则：查重与重复率计算时不计算配图片位，统一剥离 [图片] / [图] / [image] 占位符
+  const cleanA = (typeof cleanArticleText === 'function')
+    ? cleanArticleText(a)
+    : String(a == null ? '' : a).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+  const cleanB = (typeof cleanArticleText === 'function')
+    ? cleanArticleText(b)
+    : String(b == null ? '' : b).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+  const t1 = cleanA.trim();
+  const t2 = cleanB.trim();
   if (!t1 || !t2) return 0;
   const level = levelArg != null ? +levelArg : hetuLevelGet();
   let sim = null;

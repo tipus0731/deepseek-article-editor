@@ -534,6 +534,10 @@ public class MainActivity extends Activity {
 
         /** 核心：用 HttpURLConnection 抓取并解析文章，返回 JSON */
         private String fetchArticleSync(String urlStr) throws Exception {
+            Matcher um = Pattern.compile("https?://[^\\s\"'<>\\u4e00-\\u9fa5]+", Pattern.CASE_INSENSITIVE).matcher(urlStr);
+            if (um.find()) {
+                urlStr = um.group().replaceAll("[.,;:!?，。？！；：“”‘’()（）\\[\\]{}<>]+$", "").trim();
+            }
             URL url = new URL(urlStr);
             if (!url.getProtocol().startsWith("http")) throw new Exception("仅支持 http/https 链接");
             String host = url.getHost() == null ? "" : url.getHost();
@@ -552,6 +556,7 @@ public class MainActivity extends Activity {
                     String[] variants = cookieHdr == null ? new String[]{null} : new String[]{cookieHdr, null};
                     String[][] channels = {
                             {"info", "https://m.toutiao.com/i" + ttId + "/info/"},
+                            {"w", "https://m.toutiao.com/w/" + ttId + "/"},
                             {"render", "https://m.toutiao.com/i" + ttId + "/"},
                     };
                     boolean firstAttempt = true;
@@ -559,7 +564,7 @@ public class MainActivity extends Activity {
                         for (String cv : variants) {
                             try {
                                 String body = httpGet(ch[1], true, cv);
-                                if (ch[0].equals("info")) {
+                                if (ch[0].equals("info") || ch[0].equals("w")) {
                                     JSONObject root = new JSONObject(body);
                                     if (root.has("data")) {
                                         JSONObject d = root.getJSONObject("data");
@@ -569,13 +574,19 @@ public class MainActivity extends Activity {
                                         // 微头条（/w/ 链接）：正文在 thread.thread_base（纯文本），图片在 large_image_list
                                         if (content == null || content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
                                             if (d.has("thread")) {
-                                                JSONObject tb = d.getJSONObject("thread").optJSONObject("thread_base");
+                                                JSONObject threadObj = d.getJSONObject("thread");
+                                                JSONObject tb = threadObj.optJSONObject("thread_base");
+                                                if (tb == null) tb = threadObj.optJSONObject("threadBase");
                                                 if (tb != null) {
                                                     String c2 = optStr(tb, "content", "");
                                                     if (c2 == null || c2.trim().isEmpty()) c2 = optStr(tb, "title", "");
                                                     content = c2 == null ? "" : c2;
-                                                    if (title == null || title.trim().isEmpty()) title = optStr(tb, "title", "");
+                                                    if (title == null || title.trim().isEmpty() || title.contains("\n")) {
+                                                        String t2 = optStr(tb, "title", "");
+                                                        title = t2.split("\n")[0].trim();
+                                                    }
                                                     JSONArray lil = tb.optJSONArray("large_image_list");
+                                                    if (lil == null) lil = tb.optJSONArray("largeImageList");
                                                     if (lil != null) {
                                                         extraImgs = new JSONArray();
                                                         for (int i = 0; i < lil.length(); i++) {
@@ -597,16 +608,7 @@ public class MainActivity extends Activity {
                                         }
                                         if (content != null && !content.trim().isEmpty()
                                                 && !content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
-                                            JSONObject res = extractToutiaoHtmlContent(content, title);
-                                            if (extraImgs != null && extraImgs.length() > 0) {
-                                                LinkedHashSet<String> seen = new LinkedHashSet<>();
-                                                JSONArray curImgs = res.optJSONArray("images");
-                                                if (curImgs != null) for (int i = 0; i < curImgs.length(); i++) seen.add(optStr(curImgs, i, ""));
-                                                for (int i = 0; i < extraImgs.length(); i++) seen.add(optStr(extraImgs, i, ""));
-                                                JSONArray merged = new JSONArray();
-                                                for (String s : seen) { if (merged.length() >= 30) break; merged.put(s); }
-                                                res.put("images", merged);
-                                            }
+                                            JSONObject res = extractToutiaoHtmlContent(content, title, extraImgs);
                                             return res.toString();
                                         }
                                     }
@@ -740,36 +742,61 @@ public class MainActivity extends Activity {
             return m.find() ? m.group(1) : null;
         }
 
-        /** 把头条正文 HTML（<p> 与 pgc-img 图片块）转成 {title, text, images} */
-        private JSONObject extractToutiaoHtmlContent(String contentHtml, String title) throws Exception {
+        /** 把头条正文 HTML（<p> 与 pgc-img 图片块）转成 {title, rawText, processedText, text, images} */
+        private JSONObject extractToutiaoHtmlContent(String contentHtml, String title, JSONArray extraImgs) throws Exception {
             LinkedHashSet<String> images = new LinkedHashSet<>();
-            // 图片 -> [图片] 占位（仅保留下一步会收录的图）
+            // 1. 预处理文本：图片 -> [图片] 占位（仅保留下一步会收录的正文图）
             Matcher im0 = Pattern.compile("<img[^>]*>", Pattern.CASE_INSENSITIVE).matcher(contentHtml);
             StringBuffer sb = new StringBuffer();
             while (im0.find()) {
-                String rep = pickImageUrl(im0.group()) != null ? " [图片] " : "";
+                String rep = pickImageUrl(im0.group()) != null ? " \n[图片]\n " : "";
                 im0.appendReplacement(sb, Matcher.quoteReplacement(rep));
             }
             im0.appendTail(sb);
-            String seg = sb.toString()
+            String segProcessed = sb.toString()
                     .replaceAll("(?i)<br[^>]*>", "\n")
                     .replaceAll("(?i)</?(p|div|h[1-6]|li|tr|blockquote|section|article|pre)[^>]*>", "\n")
                     .replaceAll("<[^>]+>", " ")
                     .replaceAll("&nbsp;", " ")
-                    .replaceAll("\\s+", " ")
+                    .replaceAll("[ \\t\\u3000\\u00A0]+", " ")
                     .trim();
-            StringBuilder text = new StringBuilder();
-            for (String line : seg.split("\n")) {
-                String l = line.trim();
+            StringBuilder processedText = new StringBuilder();
+            for (String line : segProcessed.split("\n")) {
+                String l = decodeEntities(line).trim();
                 if (!l.isEmpty()) {
-                    if (text.length() > 0) text.append('\n');
-                    text.append(l);
+                    if (processedText.length() > 0) processedText.append("\n\n");
+                    processedText.append(l);
                 }
             }
+
+            // 2. 原始文章文本：不做任何标记处理，不插入 [图片] 占位，保留作者原始自然段落与空行格式
+            String segRaw = contentHtml
+                    .replaceAll("(?i)<img[^>]*>", "")
+                    .replaceAll("(?i)<br[^>]*>", "\n")
+                    .replaceAll("(?i)</?(p|div|h[1-6]|li|tr|blockquote|section|article|pre)[^>]*>", "\n")
+                    .replaceAll("<[^>]+>", " ")
+                    .replaceAll("&nbsp;", " ")
+                    .replaceAll("[ \\t\\u3000\\u00A0]+", " ")
+                    .trim();
+            StringBuilder rawText = new StringBuilder();
+            for (String line : segRaw.split("\n")) {
+                String l = decodeEntities(line).trim();
+                if (!l.isEmpty()) {
+                    if (rawText.length() > 0) rawText.append("\n\n");
+                    rawText.append(l);
+                }
+            }
+
             Matcher im = Pattern.compile("<img[^>]*>", Pattern.CASE_INSENSITIVE).matcher(contentHtml);
             while (im.find()) {
                 String u = pickImageUrl(im.group());
                 if (u != null) images.add(u);
+            }
+            if (extraImgs != null) {
+                for (int i = 0; i < extraImgs.length(); i++) {
+                    String u = optStr(extraImgs, i, "");
+                    if (!u.isEmpty()) images.add(u);
+                }
             }
             JSONArray imgArr = new JSONArray();
             int cnt = 0;
@@ -778,9 +805,40 @@ public class MainActivity extends Activity {
                 imgArr.put(u);
             }
             JSONObject obj = new JSONObject();
-            String t = title == null ? "" : title.trim();
-            obj.put("title", t.length() > 120 ? t.substring(0, 120) : t);
-            obj.put("text", text.length() > 30000 ? text.substring(0, 30000) : text.toString());
+            String t = title == null ? "" : decodeEntities(title.trim());
+            if (t.contains("\n")) {
+                t = t.split("\n")[0].trim();
+            }
+            t = t.replaceAll("[:：，,。!！\\s]+$", "").trim();
+            if (t.length() > 80) t = t.substring(0, 80).trim();
+
+            String rawOut = rawText.length() > 30000 ? rawText.substring(0, 30000) : rawText.toString();
+            String procOut = processedText.length() > 30000 ? processedText.substring(0, 30000) : processedText.toString();
+
+            // 微头条图片不在正文内，将配图标记插入到各段落后供 AI 理解配图位置
+            if (imgArr.length() > 0 && !procOut.contains("[图片]")) {
+                String[] paras = procOut.split("\n\n");
+                StringBuilder pb = new StringBuilder();
+                int imgIdx = 0;
+                for (int i = 0; i < paras.length; i++) {
+                    if (pb.length() > 0) pb.append("\n\n");
+                    pb.append(paras[i]);
+                    if (imgIdx < imgArr.length()) {
+                        pb.append("\n\n[图片]");
+                        imgIdx++;
+                    }
+                }
+                while (imgIdx < imgArr.length()) {
+                    pb.append("\n\n[图片]");
+                    imgIdx++;
+                }
+                procOut = pb.toString();
+            }
+
+            obj.put("title", t);
+            obj.put("rawText", rawOut);
+            obj.put("processedText", procOut);
+            obj.put("text", procOut);
             obj.put("images", imgArr);
             obj.put("source", "toutiao");
             obj.put("via", "native");
@@ -797,11 +855,68 @@ public class MainActivity extends Activity {
             // URLDecoder 会把 + 变空格，先把字面 + 还原成 %2B 再解码
             String decoded = URLDecoder.decode(encoded.replace("+", "%2B"), "UTF-8");
             JSONObject root = new JSONObject(decoded);
-            JSONObject info = root.has("articleInfo") ? root.getJSONObject("articleInfo") : null;
-            if (info == null) return null;
-            String content = optStr(info, "content", "");
+            JSONObject info = root.optJSONObject("articleInfo");
+            String content = info != null ? optStr(info, "content", "") : "";
+            String title = info != null ? optStr(info, "title", "") : "";
+            JSONArray extraImgs = new JSONArray();
+
+            boolean isMicro = false;
+            if (content.trim().isEmpty() || content.replaceAll("<[^>]+>", "").trim().isEmpty()) {
+                JSONObject thread = root.optJSONObject("thread");
+                if (thread == null && info != null) thread = info.optJSONObject("thread");
+                if (thread == null) {
+                    JSONObject data = root.optJSONObject("data");
+                    if (data != null) thread = data.optJSONObject("thread");
+                }
+                JSONObject tb = null;
+                if (thread != null) {
+                    tb = thread.optJSONObject("threadBase");
+                    if (tb == null) tb = thread.optJSONObject("thread_base");
+                }
+                if (tb == null) {
+                    tb = root.optJSONObject("threadBase");
+                    if (tb == null) tb = root.optJSONObject("thread_base");
+                }
+                if (tb != null) {
+                    isMicro = true;
+                    content = optStr(tb, "content", optStr(tb, "title", ""));
+                    String t2 = optStr(tb, "title", content);
+                    title = t2.split("\n")[0].replaceAll("[:：，,。!！\\s]+$", "").trim();
+                    JSONArray list = tb.optJSONArray("largeImageList");
+                    if (list == null) list = tb.optJSONArray("large_image_list");
+                    if (list != null) {
+                        for (int i = 0; i < list.length(); i++) {
+                            JSONObject item = list.optJSONObject(i);
+                            String u = item != null ? optStr(item, "url", "") : optStr(list, i, "");
+                            if (!u.isEmpty() && pickImageUrl("<img src=\"" + u + "\">") != null) {
+                                extraImgs.put(u);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!isMicro && root.has("seoTDK")) {
+                JSONObject seo = root.optJSONObject("seoTDK");
+                if (seo != null) {
+                    String st = optStr(seo, "title", "");
+                    if (!st.isEmpty()) {
+                        st = st.replaceAll("(?i)(?:\\s+网友)?\\s*[_-].*今日头条.*$", "").trim();
+                        if (!st.isEmpty()) title = st;
+                    }
+                }
+            }
+            if (title.isEmpty()) {
+                Matcher tm = Pattern.compile("<title[^>]*>([\\s\\S]*?)</title>", Pattern.CASE_INSENSITIVE).matcher(html);
+                if (tm.find()) title = decodeEntities(tm.group(1).trim());
+            }
+            if (title.contains("\n")) {
+                title = title.split("\n")[0].trim();
+            }
+            title = title.replaceAll("[:：，,。!！\\s]+$", "").trim();
+
             if (content.trim().isEmpty() || content.replaceAll("<[^>]+>", "").trim().isEmpty()) return null;
-            return extractToutiaoHtmlContent(content, optStr(info, "title", ""));
+            return extractToutiaoHtmlContent(content, title, extraImgs);
         }
 
         private String detectCharset(String contentType, byte[] bytes) {
@@ -838,7 +953,8 @@ public class MainActivity extends Activity {
         /** 提取正文（优先 article-content；通用后备）与所有图片 */
         private String parseArticle(String html, boolean isToutiao) throws Exception {
             LinkedHashSet<String> images = new LinkedHashSet<>();
-            StringBuilder text = new StringBuilder();
+            StringBuilder processedText = new StringBuilder();
+            StringBuilder rawText = new StringBuilder();
             String seg = html;
             String title = "";
 
@@ -867,8 +983,8 @@ public class MainActivity extends Activity {
             // 段落文本
             Matcher pRe = Pattern.compile("<p[^>]*>([\\s\\S]*?)</p>", Pattern.CASE_INSENSITIVE).matcher(seg);
             while (pRe.find()) {
-                // 段落内的 <img>：只给“被收录的正文图”保留 [图片] 占位（与图片列表一一对应）
                 String inner = pRe.group(1);
+                // 1. 预处理文本：保留 [图片] 标记
                 Matcher innerImg = Pattern.compile("<img[^>]*>", Pattern.CASE_INSENSITIVE).matcher(inner);
                 StringBuffer inBuf = new StringBuffer();
                 while (innerImg.find()) {
@@ -876,15 +992,28 @@ public class MainActivity extends Activity {
                     innerImg.appendReplacement(inBuf, Matcher.quoteReplacement(rep));
                 }
                 innerImg.appendTail(inBuf);
-                inner = inBuf.toString()
+                String pText = decodeEntities(inBuf.toString())
                         .replaceAll("(?i)<br[^>]*>", "\n")
                         .replaceAll("<[^>]+>", " ")
                         .replaceAll("&nbsp;", " ")
                         .replaceAll("\\s+", " ")
                         .trim();
-                if (!inner.isEmpty()) {
-                    if (text.length() > 0) text.append('\n');
-                    text.append(inner);
+                if (!pText.isEmpty()) {
+                    if (processedText.length() > 0) processedText.append('\n');
+                    processedText.append(pText);
+                }
+
+                // 2. 原始文章文本：不做任何标记处理，不带 [图片] 标记
+                String rText = decodeEntities(inner)
+                        .replaceAll("(?i)<img[^>]*>", "")
+                        .replaceAll("(?i)<br[^>]*>", "\n")
+                        .replaceAll("<[^>]+>", " ")
+                        .replaceAll("&nbsp;", " ")
+                        .replaceAll("\\s+", " ")
+                        .trim();
+                if (!rText.isEmpty()) {
+                    if (rawText.length() > 0) rawText.append('\n');
+                    rawText.append(rText);
                 }
             }
 
@@ -899,9 +1028,10 @@ public class MainActivity extends Activity {
             if (tm.find()) title = decodeEntities(tm.group(1).trim());
             if (title.length() > 120) title = title.substring(0, 120);
 
-            String textOut = text.toString();
-            if (textOut.length() > 30000) textOut = textOut.substring(0, 30000);
-            if (textOut.isEmpty() && images.isEmpty()) {
+            String rawOut = rawText.length() > 30000 ? rawText.substring(0, 30000) : rawText.toString();
+            String procOut = processedText.length() > 30000 ? processedText.substring(0, 30000) : processedText.toString();
+
+            if (rawOut.isEmpty() && images.isEmpty()) {
                 throw new Exception(isToutiao
                         ? "未能从今日头条页面提取到正文（可能被 WAF 拦截）"
                         : "未能从该页面提取到正文（动态渲染或反爬），请复制文本粘贴");
@@ -915,7 +1045,9 @@ public class MainActivity extends Activity {
 
             JSONObject obj = new JSONObject();
             obj.put("title", title);
-            obj.put("text", textOut);
+            obj.put("rawText", rawOut);
+            obj.put("processedText", procOut);
+            obj.put("text", procOut);
             obj.put("images", imgArr);
             obj.put("source", isToutiao ? "toutiao" : "generic");
             obj.put("via", "native");
