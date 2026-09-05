@@ -765,15 +765,21 @@ public class MainActivity extends Activity {
                     .replaceAll("[ \\t\\u3000\\u00A0]+", " ")
                     .trim();
             StringBuilder processedText = new StringBuilder();
-            for (String line : segProcessed.split("\n")) {
+            int pEmpty = 0;
+            for (String line : segProcessed.split("\r?\n")) {
                 String l = decodeEntities(line).trim();
-                if (!l.isEmpty()) {
-                    if (processedText.length() > 0) processedText.append("\n\n");
+                if (l.isEmpty()) {
+                    pEmpty++;
+                } else {
+                    if (processedText.length() > 0) {
+                        processedText.append(pEmpty > 0 ? "\n\n" : "\n");
+                    }
                     processedText.append(l);
+                    pEmpty = 0;
                 }
             }
 
-            // 2. 原始文章文本：不做任何标记处理，不插入 [图片] 占位，保留作者原始自然段落与空行格式
+            // 2. 原始文章文本：不做任何标记处理，不插入 [图片] 占位，忠实保留作者原始自然段落与空行格式
             String segRaw = contentHtml
                     .replaceAll("(?i)<img[^>]*>", "")
                     .replaceAll("(?i)<br[^>]*>", "\n")
@@ -783,11 +789,17 @@ public class MainActivity extends Activity {
                     .replaceAll("[ \\t\\u3000\\u00A0]+", " ")
                     .trim();
             StringBuilder rawText = new StringBuilder();
-            for (String line : segRaw.split("\n")) {
+            int rEmpty = 0;
+            for (String line : segRaw.split("\r?\n")) {
                 String l = decodeEntities(line).trim();
-                if (!l.isEmpty()) {
-                    if (rawText.length() > 0) rawText.append("\n\n");
+                if (l.isEmpty()) {
+                    rEmpty++;
+                } else {
+                    if (rawText.length() > 0) {
+                        rawText.append(rEmpty > 0 ? "\n\n" : "\n");
+                    }
                     rawText.append(l);
+                    rEmpty = 0;
                 }
             }
 

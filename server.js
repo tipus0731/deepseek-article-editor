@@ -254,9 +254,20 @@ function toutiaoHtmlToResult(contentHtml, title, extraImages) {
     .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ');
 
-  for (const line of segProcessed.split('\n')) {
-    const l = decodeEntities(line).replace(/[ \t\u3000\u00A0]+/g, ' ').trim();
-    if (l) processedParagraphs.push(l);
+  function buildPreservedText(seg) {
+    let out = '';
+    let empty = 0;
+    for (const line of String(seg).split(/\r?\n/)) {
+      const l = decodeEntities(line).replace(/[ \t\u3000\u00A0]+/g, ' ').trim();
+      if (!l) {
+        empty++;
+      } else {
+        if (out.length > 0) out += (empty > 0 ? '\n\n' : '\n');
+        out += l;
+        empty = 0;
+      }
+    }
+    return out;
   }
 
   let segRaw = String(contentHtml)
@@ -265,13 +276,8 @@ function toutiaoHtmlToResult(contentHtml, title, extraImages) {
     .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ');
 
-  for (const line of segRaw.split('\n')) {
-    const l = decodeEntities(line).replace(/[ \t\u3000\u00A0]+/g, ' ').trim();
-    if (l) rawParagraphs.push(l);
-  }
-
-  const rawText = rawParagraphs.join('\n\n').slice(0, MAX_ARTICLE_CHARS);
-  let processedText = processedParagraphs.join('\n\n').slice(0, MAX_ARTICLE_CHARS);
+  const rawText = buildPreservedText(segRaw).slice(0, MAX_ARTICLE_CHARS);
+  let processedText = buildPreservedText(segProcessed).slice(0, MAX_ARTICLE_CHARS);
 
   const allImgs = [...new Set([...images, ...(extraImages || [])])].slice(0, 30);
   if (allImgs.length && !processedText.includes('[图片]')) {
@@ -679,7 +685,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log('──────────────────────────────────────────────');
-  console.log('  文章助手 v1.60 已启动');
+  console.log('  文章助手 v1.61 已启动');
   console.log('  访问地址: http://' + HOST + ':' + PORT);
   console.log(
     SERVER_KEY

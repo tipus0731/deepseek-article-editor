@@ -378,9 +378,20 @@ function toutiaoHtmlToResult(contentHtml, title) {
     .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ');
 
-  for (const line of segProcessed.split('\n')) {
-    const l = decodeEntities(line).replace(/[ \t\u3000]+/g, ' ').trim();
-    if (l) processedParagraphs.push(l);
+  function buildPreservedText(seg) {
+    let out = '';
+    let empty = 0;
+    for (const line of String(seg).split(/\r?\n/)) {
+      const l = decodeEntities(line).replace(/[ \t\u3000\u00A0]+/g, ' ').trim();
+      if (!l) {
+        empty++;
+      } else {
+        if (out.length > 0) out += (empty > 0 ? '\n\n' : '\n');
+        out += l;
+        empty = 0;
+      }
+    }
+    return out;
   }
 
   let segRaw = String(contentHtml)
@@ -389,13 +400,8 @@ function toutiaoHtmlToResult(contentHtml, title) {
     .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|pre)>/gi, '\n')
     .replace(/<[^>]+>/g, ' ');
 
-  for (const line of segRaw.split('\n')) {
-    const l = decodeEntities(line).replace(/[ \t\u3000]+/g, ' ').trim();
-    if (l) rawParagraphs.push(l);
-  }
-
-  const rawText = rawParagraphs.join('\n').slice(0, 30000);
-  const processedText = processedParagraphs.join('\n').slice(0, 30000);
+  const rawText = buildPreservedText(segRaw).slice(0, 30000);
+  const processedText = buildPreservedText(segProcessed).slice(0, 30000);
 
   return {
     title: decodeEntities(String(title || '')).slice(0, 120),
@@ -1830,6 +1836,8 @@ function buildDocx(title, blocks) {
       const dispW = Math.min(500, w);
       const dispH = Math.round(h * (dispW / w));
       bodyXml.push(imageParagraphXml(rid, Math.round(dispW * 9525), Math.round(dispH * 9525), imgId));
+    } else if (b.type === 'empty') {
+      bodyXml.push('<w:p/>');
     } else if (b.type === 'h') {
       bodyXml.push('<w:p><w:pPr><w:spacing w:before="160" w:after="120"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">' + escXml(b.text) + '</w:t></w:r></w:p>');
     } else {

@@ -27,13 +27,21 @@
       .replace(/(\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】)/gi, ' ')
       .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
         return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
-      })
-      .split(/\r?\n+/)
-      .map((s) => s.replace(/[ \t\u3000]+/g, ' ').trim())
-      .filter(Boolean);
-    for (const p of raw) {
-      if (/^#{1,6}\s/.test(p)) blocks.push({ type: 'h', text: p.replace(/^#{1,6}\s*/, '') });
-      else blocks.push({ type: 'p', text: p });
+      });
+    const lines = raw.split(/\r?\n/);
+    let emptyCount = 0;
+    for (const l of lines) {
+      const p = l.replace(/[ \t\u3000]+/g, ' ').trim();
+      if (!p) {
+        emptyCount++;
+      } else {
+        if (emptyCount > 0 && blocks.length > 0) {
+          blocks.push({ type: 'empty' });
+        }
+        emptyCount = 0;
+        if (/^#{1,6}\s/.test(p)) blocks.push({ type: 'h', text: p.replace(/^#{1,6}\s*/, '') });
+        else blocks.push({ type: 'p', text: p });
+      }
     }
     return blocks;
   }
@@ -553,10 +561,15 @@
     return n || '文章';
   }
 
-  /* 导出文件名：内容（去空白）前 10 个字 + 重复率（如 xxx_重复率12.3%.docx） */
+  /* 导出文件名：优先取首段标题（<=25字）；否则取内容前 10 个字 + 重复率（如 xxx_重复率12.3%.docx） */
   function docxNameFromText(text, fallback, simPct) {
-    const t = String(text || '').replace(/\s+/g, '');
-    let n = t.slice(0, 10);
+    const firstLine = String(text || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0] || '';
+    let n = '';
+    if (firstLine && firstLine.length <= 25) {
+      n = firstLine;
+    } else {
+      n = String(text || '').replace(/\s+/g, '').slice(0, 10);
+    }
     if (!n) n = fallback || '生成文章';
     n = n.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '_').trim();
     if (!n) n = '生成文章';
