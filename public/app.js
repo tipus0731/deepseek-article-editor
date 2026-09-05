@@ -1534,6 +1534,26 @@ function cleanArticleText(text) {
 window.cleanArticleText = cleanArticleText;
 window.cleanPublishText = cleanArticleText;
 
+/* ================= 原文查重专用预处理（不剔除空行） =================
+ * 用于送进 diff_match_patch 进行逐字符比对的原文：
+ * 1) 剔除 [图片]、[图]、[image] 等图片占位符；
+ * 2) 剔除 [捂脸]、[流泪] 等表情占位符；
+ * 3) 剔除 Markdown 标题符号（### 标题 -> 标题）；
+ * 4) 保留原文所有的自然换行与空行结构，不进行空行剔除/折叠，对齐皮文文原文输入区保留空行参与检查的机制！
+ */
+function cleanOriginalText(text) {
+  if (!text) return '';
+  const raw = String(text)
+    .replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '')
+    .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
+      return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
+    });
+  const lines = raw.split(/\r?\n/)
+    .map((l) => l.replace(/^#{1,6}\s*/, '').replace(/[ \t\u3000]+/g, ' ').trim());
+  return lines.join('\n');
+}
+window.cleanOriginalText = cleanOriginalText;
+
 function fillArticle(data) {
   els.linkArticle.classList.remove('hidden');
   const rawText = String(data.rawText != null ? data.rawText : (data.text || ''));
@@ -1674,10 +1694,10 @@ function hetuParagraphMatch(t1, t2) {
   return null;
 }
 function textSimilarity(a, b, levelArg) {
-  // 核心规则：查重与重复率计算时不计算配图片位，统一剥离 [图片] / [图] / [image] 占位符
-  const cleanA = (typeof cleanArticleText === 'function')
-    ? cleanArticleText(a)
-    : String(a == null ? '' : a).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+  // 原文：使用 cleanOriginalText 处理，保留原文自然空行送进 diff_match_patch；对比文使用 cleanArticleText 处理
+  const cleanA = (typeof cleanOriginalText === 'function')
+    ? cleanOriginalText(a)
+    : ((typeof cleanArticleText === 'function') ? cleanArticleText(a) : String(a == null ? '' : a).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, ''));
   const cleanB = (typeof cleanArticleText === 'function')
     ? cleanArticleText(b)
     : String(b == null ? '' : b).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');

@@ -59,6 +59,19 @@
   }
   window.cleanArticleText = cleanArticleText;
   window.cleanPublishText = cleanArticleText;
+  /* 原文查重专用预处理（不剔除空行）：送入 diff_match_patch 的原文不进行空行处理，保留所有自然空行 */
+  function cleanOriginalText(text) {
+    if (!text) return '';
+    const raw = String(text)
+      .replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '')
+      .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
+        return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
+      });
+    const lines = raw.split(/\r?\n/)
+      .map((l) => l.replace(/^#{1,6}\s*/, '').replace(/[ \t\u3000]+/g, ' ').trim());
+    return lines.join('\n');
+  }
+  window.cleanOriginalText = cleanOriginalText;
 
   /* 提取 Word 内容块（blocks）中的纯文本，彻底去除任何 [图片] / 【图片】 配图标记，
    * 确保文皮皮查重、Word 导出名称、判重对比时不计算配图片位 */
