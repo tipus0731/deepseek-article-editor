@@ -8,7 +8,7 @@ const els = {
   inputText: $('inputText'), inputCount: $('inputCount'), inputWarn: $('inputWarn'),
   panePaste: $('pane-paste'), paneLink: $('pane-link'),
   linkUrl: $('linkUrl'), fetchBtn: $('fetchBtn'), linkResult: $('linkResult'),
-  batchConc: $('batchConc'), useLinkNameChk: $('useLinkNameChk'), useTitleNameChk: $('useTitleNameChk'), useTitleSimChk: $('useTitleSimChk'), imgPosChk: $('imgPosChk'),
+  batchConc: $('batchConc'), exportOriginalChk: $('exportOriginalChk'), useLinkNameChk: $('useLinkNameChk'), useTitleNameChk: $('useTitleNameChk'), useTitleSimChk: $('useTitleSimChk'), imgPosChk: $('imgPosChk'),
   wordChips: $('wordChips'), wordInput: $('wordInput'), addWord: $('addWord'),
   loadPreset: $('loadPreset'), clearWords: $('clearWords'),
   style: $('style'), length: $('length'), targetLenField: $('targetLenField'),
@@ -1354,15 +1354,35 @@ els.length.addEventListener('change', () => {
   updateCounts();
 })();
 
+/* ================= 文皮皮标准正文预处理 =================
+ * 1) 剔除 [图片]、[图]、[image] 等图片占位符；
+ * 2) 剔除 [捂脸]、[流泪] 等表情占位符；
+ * 3) 剔除 Markdown 标题符号（### 标题 -> 标题，与 Word 导出的纯文本完全一致）；
+ * 4) 保留各段独立换行（\n），去除每行首尾空白及行内多余连续空格，过滤空行。
+ * 用户在输入框中复制、或从导出的 Word 复制，粘贴到文皮皮 (wenpipi.com/sim) 时，两边格式与字符完全对齐。
+ */
+function cleanArticleText(text) {
+  if (!text) return '';
+  const raw = String(text)
+    .replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '')
+    .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
+      return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
+    });
+  const lines = raw.split(/\r?\n/)
+    .map((l) => l.replace(/^#{1,6}\s*/, '').replace(/[ \t\u3000]+/g, ' ').trim())
+    .filter((l) => l.length > 0);
+  return lines.join('\n');
+}
+window.cleanArticleText = cleanArticleText;
+window.cleanPublishText = cleanArticleText;
+
 /* ================= 文章抓取结果填充 + Android 原生回调 ================= */
 function fillArticle(data) {
   els.linkArticle.classList.remove('hidden');
-  // 原文按「文皮皮·发布形态」预处理后填入输入框：无 [图片]/表情占位符、空白折叠，
-  // 用户在文皮皮上可直接复制该文本（与判重口径一致）；
+  // 原文按文皮皮标准预处理后填入输入框：保留真实自然段落换行(\n)，去除 [图片] 标记，
+  // 用户在文皮皮 (wenpipi.com/sim) 上可直接复制该文本作为对比原文（与 Word 导出及判重口径 100% 一致）；
   // 原始带标记文本存入 __articleRawText，仅用于图片锚点定位与 AI 提示词。
-  const cleaned = (typeof window.cleanPublishText === 'function')
-    ? window.cleanPublishText(data.text || '')
-    : String(data.text || '');
+  const cleaned = cleanArticleText(data.text || '');
   els.linkResult.value = cleaned;
   window.__articleRawText = String(data.text || '');
   els.linkTitle.textContent = data.title || '';
@@ -1494,6 +1514,7 @@ function hetuParagraphMatch(t1, t2) {
 function textSimilarity(a, b, levelArg) {
   const t1 = String(a == null ? '' : a).trim();
   const t2 = String(b == null ? '' : b).trim();
+  if (!t1 || !t2) return 0;
   const level = levelArg != null ? +levelArg : hetuLevelGet();
   let sim = null;
   textSimilarity.note = null;
@@ -1847,6 +1868,11 @@ els.wmRatio.addEventListener('input', () => {
 function autoCropEnabled() {
   return !els.autoCropChk || els.autoCropChk.checked;
 }
+/* 导出读取原文 Word 开关（跳过 AI 改写，直接导出读取的原文和图片） */
+function exportOriginalEnabled() {
+  return !!(els.exportOriginalChk && els.exportOriginalChk.checked);
+}
+window.exportOriginalEnabled = exportOriginalEnabled;
 /* 批量导出：是否使用链接作为 Word 文件名 */
 function useLinkNameEnabled() {
   return !!(els.useLinkNameChk && els.useLinkNameChk.checked);
@@ -1916,6 +1942,12 @@ if (els.useTitleSimChk) {
     }
   });
 }
+if (els.exportOriginalChk) {
+  els.exportOriginalChk.addEventListener('change', () => {
+    storeSet('dsw_export_original', els.exportOriginalChk.checked ? '1' : '0');
+    flash(els.exportOriginalChk.checked ? '已开启：直接导出读取原文 Word（跳过 AI 改写）' : '已关闭：将进行 AI 改写');
+  });
+}
 if (els.imgPosChk) {
   els.imgPosChk.addEventListener('change', () => {
     storeSet('dsw_img_pos', els.imgPosChk.checked ? '1' : '0');
@@ -1924,6 +1956,8 @@ if (els.imgPosChk) {
 {
   const v = storeGet('dsw_autocrop');
   els.autoCropChk.checked = v === null ? true : v === '1';
+  const vo = storeGet('dsw_export_original');
+  if (els.exportOriginalChk) els.exportOriginalChk.checked = vo === '1';
   const vn = storeGet('dsw_use_link_name');
   if (els.useLinkNameChk) els.useLinkNameChk.checked = vn === null ? false : vn === '1';
   const vt = storeGet('dsw_use_title_name');
