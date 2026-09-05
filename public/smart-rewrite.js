@@ -876,6 +876,9 @@
         const pngImages = await preparePngImages(imgs.map((u) => ({ url: u, blobUrl: '' })), { log: logAuto, autoCrop: true });
 
         const isExportOrig = (typeof exportOriginalEnabled === 'function') && exportOriginalEnabled();
+        const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
+        const useTitleName = (typeof useTitleNameEnabled === 'function') ? useTitleNameEnabled() : false;
+        const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
 
         // ① 原始文章构建 Word 内容块（原始文章不做任何处理，直接供导出）
         const origBlocks = blocksWithImages(processedSource, rawArticle, pngImages);
@@ -889,9 +892,9 @@
             if (useTitleName || useTitleSimName) {
               origDocxName = (data.title ? sanitizeFileName(data.title) : ('文章' + idx)) + '_原文.docx';
             } else if (useLinkName) {
-              origDocxName = docxNameFromUrl(url) + '_原文.docx';
+              origDocxName = docxNameFromUrl(url).replace(/\.docx$/i, '') + '_原文.docx';
             } else {
-              origDocxName = docxNameFromText(rawArticle, data.title || ('文章' + idx)) + '_原文.docx';
+              origDocxName = docxNameFromText(rawArticle, data.title || ('文章' + idx)).replace(/\.docx$/i, '') + '_原文.docx';
             }
             if (usedNames.has(origDocxName)) {
               const dot = origDocxName.lastIndexOf('.');
@@ -947,10 +950,6 @@
         const wordPlainText = getBlocksPlainText(blocks);
         setStage('📊 导出准备中…', 78, '重复率 ' + ((sim != null ? sim : 1) * 100).toFixed(2) + '%');
         // ③ 构建并导出改写后的 Word
-        const useLinkName = (typeof useLinkNameEnabled === 'function') ? useLinkNameEnabled() : false;
-        const useTitleName = (typeof useTitleNameEnabled === 'function') ? useTitleNameEnabled() : false;
-        const useTitleSimName = (typeof useTitleSimNameEnabled === 'function') ? useTitleSimNameEnabled() : false;
-
         let docxName = useTitleSimName
           ? docxNameFromTitle(data.title, sim != null ? sim : 1)
           : useTitleName
