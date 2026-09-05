@@ -376,7 +376,11 @@ public class MainActivity extends Activity {
                                     // 用 optStr 防 "null" 字面量：DeepSeek Pro 思考阶段 delta.content 为 JSON null，
                                     // optString 会把它变成字符串 "null" 并 append 进正文（正文/导出/文件名大量 null 的根因）
                                     pc = optStr(delta, "content", null);
-                                    rc = optStr(delta, "reasoning_content", null); // Pro 思考阶段的增量只有它
+                                    if (pc == null) pc = optStr(delta, "text", null);
+                                    rc = optStr(delta, "reasoning_content", null);
+                                    if (rc == null) rc = optStr(delta, "reasoning", null);
+                                    if (rc == null) rc = optStr(delta, "thought", null);
+                                    if (rc == null) rc = optStr(delta, "thinking", null);
                                 }
                             }
                         } catch (Exception ignore) { }

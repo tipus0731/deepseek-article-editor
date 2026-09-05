@@ -915,23 +915,24 @@ async function streamRewrite(body, signal, out) {
       let j;
       try { j = JSON.parse(payload); } catch { continue; }
       const delta = j.choices && j.choices[0] && j.choices[0].delta;
-      if (!delta) continue;
-      if (delta.reasoning_content) {
-        reasoningBuf += delta.reasoning_content;
+      const rText = delta.reasoning_content || delta.reasoning || delta.thought || delta.thinking || '';
+      if (rText) {
+        reasoningBuf += rText;
         if (!out) {
-          els.reasonText.appendChild(document.createTextNode(delta.reasoning_content));
+          els.reasonText.appendChild(document.createTextNode(rText));
           els.reasonBox.classList.remove('hidden');
         } else if (typeof out.onReasoning === 'function') {
-          out.onReasoning(delta.reasoning_content);
+          out.onReasoning(rText);
         }
       }
-      if (delta.content) {
+      const cText = delta.content || delta.text || '';
+      if (cText) {
         if (out) {
-          out.text += delta.content;
-          if (typeof out.onChunk === 'function') out.onChunk(delta.content);
+          out.text += cText;
+          if (typeof out.onChunk === 'function') out.onChunk(cText);
         } else {
-          outputText += delta.content;
-          els.outResult.appendChild(document.createTextNode(delta.content));
+          outputText += cText;
+          els.outResult.appendChild(document.createTextNode(cText));
           updateCounts();
         }
       }

@@ -619,7 +619,7 @@
   /* 原生 AI 空闲看门狗：替代旧的「240 秒一刀切」总时长限制。
      只有连续 NATIVE_AI_IDLE_MS 毫秒收不到任何流式增量/结果回调才判定连接中断，
      深度思考 + 长文等正常慢速生成不会被误杀。 */
-  const NATIVE_AI_IDLE_MS = 120000;        // 连续 120 秒无任何输出 → 判定中断
+  const NATIVE_AI_IDLE_MS = 180000;        // 连续 180 秒无任何输出 → 判定中断
   const NATIVE_AI_WATCHDOG_TICK_MS = 15000; // 每 15 秒巡检一次
   /* Java 流式增量回调：把 AI 已生成的增量文本推给对应任务的 onChunk（进度条实时显示） */
   window.onNativeAiChunk = function (cbId, taskId, o) {
