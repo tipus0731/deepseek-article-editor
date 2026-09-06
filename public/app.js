@@ -1146,13 +1146,13 @@ function switchView(view) {
 /* ================= 复制 / 下载 ================= */
 async function copyOutput() {
   if (!outputText) { flash('暂无内容可复制', true); return; }
-  // 复制给用户用于发布或文皮皮查重的内容，不计算且不包含任何 [图片] 配图标记
-  const cleanText = (typeof cleanArticleText === 'function')
-    ? cleanArticleText(outputText)
-    : String(outputText).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '').split(/\r?\n+/).map((s) => s.trim()).filter(Boolean).join('\n');
+  // 复制给用户用于发布或文皮皮查重的内容，经过 AI 专用预处理（过滤空行与 Markdown 占位符）
+  const cleanText = (typeof cleanAiArticleText === 'function')
+    ? cleanAiArticleText(outputText)
+    : ((typeof cleanArticleText === 'function') ? cleanArticleText(outputText) : String(outputText).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '').split(/\r?\n+/).map((s) => s.trim()).filter(Boolean).join('\n'));
   try {
     await navigator.clipboard.writeText(cleanText);
-    flash('已复制到剪贴板（已去除配图标记，可直接查重）');
+    flash('已复制到剪贴板（已去除配图标记与多余空行，可直接查重）');
   } catch {
     const ta = document.createElement('textarea');
     ta.value = cleanText;
@@ -1160,14 +1160,14 @@ async function copyOutput() {
     ta.select();
     document.execCommand('copy');
     ta.remove();
-    flash('已复制到剪贴板（已去除配图标记，可直接查重）');
+    flash('已复制到剪贴板（已去除配图标记与多余空行，可直接查重）');
   }
 }
 function downloadOutput() {
   if (!outputText) { flash('暂无内容可下载', true); return; }
-  const cleanText = (typeof cleanArticleText === 'function')
-    ? cleanArticleText(outputText)
-    : String(outputText).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '').split(/\r?\n+/).map((s) => s.trim()).filter(Boolean).join('\n');
+  const cleanText = (typeof cleanAiArticleText === 'function')
+    ? cleanAiArticleText(outputText)
+    : ((typeof cleanArticleText === 'function') ? cleanArticleText(outputText) : String(outputText).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '').split(/\r?\n+/).map((s) => s.trim()).filter(Boolean).join('\n'));
   const blob = new Blob(['\uFEFF' + cleanText], { type: 'text/plain;charset=utf-8' });
   const name = '文章助手修改结果_' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-').replace(':', '') + '.txt';
   if (IS_ANDROID) {
@@ -1519,30 +1519,8 @@ els.length.addEventListener('change', () => {
   updateCounts();
 })();
 
-/* ================= 文皮皮标准正文预处理 =================
- * 1) 剔除 [图片]、[图]、[image] 等图片占位符；
- * 2) 剔除 [捂脸]、[流泪] 等表情占位符；
- * 3) 剔除 Markdown 标题符号（### 标题 -> 标题，与 Word 导出的纯文本完全一致）；
- * 4) 保留各段独立换行（\n），去除每行首尾空白及行内多余连续空格，过滤空行。
- * 用户在输入框中复制、或从导出的 Word 复制，粘贴到文皮皮 (wenpipi.com/sim) 时，两边格式与字符完全对齐。
- */
-function cleanArticleText(text) {
-  if (!text) return '';
-  const raw = String(text)
-    .replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '')
-    .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
-      return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
-    });
-  const lines = raw.split(/\r?\n/)
-    .map((l) => l.replace(/^#{1,6}\s*/, '').replace(/[ \t\u3000]+/g, ' ').trim())
-    .filter((l) => l.length > 0);
-  return lines.join('\n');
-}
-window.cleanArticleText = cleanArticleText;
-window.cleanPublishText = cleanArticleText;
-
-/* ================= 原文查重专用预处理（不剔除空行） =================
- * 用于送进 diff_match_patch 进行逐字符比对的原文：
+/* ================= 原文查重与导出专用预处理（保留自然空行） =================
+ * 用于送进 diff_match_patch 进行逐字符比对的原文以及原文 Word 导出：
  * 1) 剔除 [图片]、[图]、[image] 等图片占位符；
  * 2) 剔除 [捂脸]、[流泪] 等表情占位符；
  * 3) 剔除 Markdown 标题符号（### 标题 -> 标题）；
@@ -1560,6 +1538,42 @@ function cleanOriginalText(text) {
   return lines.join('\n');
 }
 window.cleanOriginalText = cleanOriginalText;
+
+/* ================= AI 生成文章专用预处理（过滤空行） =================
+ * 1) 剔除「事实核查表」及其后的内容；
+ * 2) 剔除 [图片]、[图]、[image] 等图片占位符；
+ * 3) 剔除 [捂脸]、[流泪] 等表情占位符；
+ * 4) 剔除 Markdown 标题符号（### 标题 -> 标题，与 Word 导出及文皮皮纯文本对齐）；
+ * 5) 空行预处理：严格过滤空行，去除每行首尾空白及行内多余连续空格，过滤空行（每段独立一行，\n 连接）。
+ * 保证 AI 文章在：① 计算文皮皮重复率 ② 导出 Word 文档 ③ 界面预览 ④ 复制与纯文本下载 中内容绝对一致！
+ */
+function cleanAiArticleText(text) {
+  if (!text) return '';
+  let str = String(text);
+  if (typeof cutFactCheck === 'function') {
+    str = cutFactCheck(str);
+  } else if (window.cutFactCheck) {
+    str = window.cutFactCheck(str);
+  } else {
+    const i = str.indexOf('事实核查表');
+    if (i >= 0) str = str.slice(0, i).replace(/\s+$/, '');
+  }
+  const raw = str
+    .replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '')
+    .replace(/\[[^\]]{1,6}\]|【[^】]{1,6}】/g, (m) => {
+      return /(?:捂脸|流泪|赞|笑哭|呲牙|害羞|偷笑|发怒|尴尬|抓狂|心|点赞)/.test(m) ? '' : m;
+    });
+  const lines = raw.split(/\r?\n/)
+    .map((l) => l.replace(/^#{1,6}\s*/, '').replace(/[ \t\u3000]+/g, ' ').trim())
+    .filter((l) => l.length > 0);
+  return lines.join('\n');
+}
+window.cleanAiArticleText = cleanAiArticleText;
+function cleanArticleText(text) {
+  return cleanAiArticleText(text);
+}
+window.cleanArticleText = cleanArticleText;
+window.cleanPublishText = cleanAiArticleText;
 
 function fillArticle(data) {
   els.linkArticle.classList.remove('hidden');
@@ -1701,13 +1715,14 @@ function hetuParagraphMatch(t1, t2) {
   return null;
 }
 function textSimilarity(a, b, levelArg) {
-  // 原文：使用 cleanOriginalText 处理，保留原文自然空行送进 diff_match_patch；对比文使用 cleanArticleText 处理
+  // 原文：使用 cleanOriginalText 处理，保留原文自然空行送进 diff_match_patch；
+  // AI生成文：使用 cleanAiArticleText 处理，进行空行过滤、表情与 Markdown 符号剔除
   const cleanA = (typeof cleanOriginalText === 'function')
     ? cleanOriginalText(a)
-    : ((typeof cleanArticleText === 'function') ? cleanArticleText(a) : String(a == null ? '' : a).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, ''));
-  const cleanB = (typeof cleanArticleText === 'function')
-    ? cleanArticleText(b)
-    : String(b == null ? '' : b).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+    : String(a == null ? '' : a).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, '');
+  const cleanB = (typeof cleanAiArticleText === 'function')
+    ? cleanAiArticleText(b)
+    : ((typeof cleanArticleText === 'function') ? cleanArticleText(b) : String(b == null ? '' : b).replace(/\[\s*(?:图片|图|image|img)\s*\]|【\s*(?:图片|图)\s*】/gi, ''));
   const t1 = cleanA.trim();
   const t2 = cleanB.trim();
   if (!t1 || !t2) return 0;
